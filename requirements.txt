@@ -1,0 +1,5 @@
+# World Cup 2026 prediction engine — runtime dependencies.
+# Deliberately tiny: the models are pure Python (no numpy/scipy/pandas), so the
+# whole thing runs on a stock interpreter + these two packages.
+requests>=2.31
+psycopg[binary]>=3.1

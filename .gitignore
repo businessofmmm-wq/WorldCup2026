@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+data/dc_params.json
+.env
