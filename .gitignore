@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 data/dc_params.json
 .env
+
+# build + deploy artifacts
+dist/
+viz/_shots/
+viz/assets/fonts/
+*.log
+data/*.log

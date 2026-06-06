@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About · WCPA — World Cup 2026 Prediction Album</title>
+  <meta name="description" content="About WCPA, the disclaimer, privacy policy, terms of use and affiliate disclosure for the World Cup 2026 prediction album." />
+  <link rel="canonical" href="https://wcpa26.com/about.html" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Staatliches&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+  <style>
+    :root{ --paper:#efe2c2; --card:#faf4e2; --edge:#2a1d12; --ink:#261a10; --soft:#5c4a34;
+      --gold:#b97e06; --terra:#d2541b;
+      --disp:'Anton',Impact,sans-serif; --lab:'Staatliches',sans-serif; --body:'Space Grotesk',system-ui,sans-serif; }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);line-height:1.6;}
+    .wrap{max-width:760px;margin:0 auto;padding:30px 22px 80px;}
+    a{color:var(--terra);}
+    .top{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--ink);margin-bottom:8px;}
+    .ball{font-family:'Georgia',serif;font-weight:700;background:var(--gold);color:#20150c;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;border:3px solid #20150c;transform:rotate(-6deg);}
+    .brand{font-family:var(--disp);letter-spacing:1.5px;font-size:1.4rem;}
+    h1{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;font-size:2.6rem;margin:18px 0 2px;}
+    h2{font-family:var(--disp);text-transform:uppercase;letter-spacing:.5px;font-size:1.5rem;margin:34px 0 6px;padding-top:10px;border-top:3px solid rgba(42,29,18,.18);}
+    .lede{color:var(--soft);font-size:1.08rem;}
+    .updated{font-family:var(--lab);letter-spacing:1.5px;color:var(--soft);font-size:.8rem;}
+    .callout{background:var(--card);border:3px solid var(--edge);border-radius:12px;padding:14px 18px;margin:14px 0;box-shadow:4px 5px 0 rgba(38,26,16,.18);}
+    .callout strong{color:var(--gold);}
+    code{background:var(--card);border:1px solid rgba(42,29,18,.2);border-radius:5px;padding:1px 5px;}
+    footer{margin-top:40px;font-size:.85rem;color:var(--soft);}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="top" href="/"><span class="ball">26</span><span class="brand">WCPA</span></a>
+    <p class="updated">WORLD CUP ’26 PREDICTION ALBUM · last updated June 2026</p>
+
+    <h1>About</h1>
+    <p class="lede">WCPA — the <strong>World Cup Prediction Album</strong> — is a statistical companion to the 2026 FIFA World Cup. A
+      hand-built model — international Elo plus a time-decayed Dixon-Coles goals model, blended and
+      calibrated — is backtested on more than 49,000 internationals dating to 1872, then used to
+      call every match, estimate each nation's title odds, and project the full wallchart. It's laid
+      out like a retro sticker album because football should be fun.</p>
+    <p>It's an independent project by <strong>Samuel Bowey</strong>, built in Australia. The whole
+      engine is pure Python over a PostgreSQL database; the numbers update from a live feed of
+      results and news as the tournament unfolds. How the model is measured (held-out accuracy,
+      calibration) is shown openly on the site's “Method” page — this is published as data, with its
+      track record visible, not as a tipping service.</p>
+
+    <h2 id="disclaimer">Disclaimer</h2>
+    <div class="callout">
+      <p><strong>For entertainment only.</strong> Everything here is statistical model output and
+      opinion. It is <strong>not betting or gambling advice</strong>, financial advice, or a
+      prediction we guarantee. Football is wonderfully unpredictable — that's the whole point.</p>
+    </div>
+    <p>We make no warranty that any forecast is accurate, complete or current. Any decision you make
+      — including any wager you choose to place with a licensed operator — is entirely your own
+      responsibility. If gambling is causing you harm, free, confidential help is available in
+      Australia at Gambling Help Online (1800 858 858).</p>
+    <p>WCPA is <strong>not affiliated with, authorised by, or endorsed by FIFA</strong>
+      or any football federation, league or club. “FIFA World Cup” and related names are trademarks
+      of their respective owners and are used here only to describe the event the model forecasts.</p>
+
+    <h2 id="privacy">Privacy</h2>
+    <p>We keep this simple because the site is simple. WCPA is a static website with
+      <strong>no accounts, no logins, and no sign-up</strong>. We do not ask for or store your
+      personal information, and the site itself sets no tracking or advertising cookies.</p>
+    <p>A few third parties are involved in delivering the page, and their own policies apply:</p>
+    <ul>
+      <li><strong>Flag images</strong> load from <code>flagcdn.com</code> (public-domain flags).</li>
+      <li><strong>Fonts</strong> load from Google Fonts.</li>
+      <li>If you click the <strong>“buy me a coffee”</strong> tip link or a <strong>shop</strong>
+        link, you leave our site for that provider (e.g. Ko-fi, or a retailer), and their privacy
+        and cookie policies then apply.</li>
+    </ul>
+    <p>If we ever add privacy-respecting analytics, we'll say so here first. Questions about your
+      privacy? Email <a href="mailto:hello@wcpa26.com">hello@wcpa26.com</a>.</p>
+
+    <h2 id="terms">Terms of Use</h2>
+    <p>By using WCPA you accept these terms. The site and its content are provided
+      “as is”, for personal, non-commercial use, with no warranties of any kind. We are not liable
+      for any loss arising from your use of the site or reliance on its forecasts, to the maximum
+      extent permitted by law. The model, code, design and written content are the property of
+      Samuel Bowey; please don't republish them wholesale without permission. These terms are
+      governed by the laws of New South Wales, Australia.</p>
+
+    <h2 id="affiliate">Affiliate &amp; Advertising Disclosure</h2>
+    <p>Some outbound links in “The Club Shop”, and the tip link, are <strong>affiliate links</strong>.
+      If you buy something after clicking one, we may earn a small commission <em>at no extra cost to
+      you</em>. We only feature things that fit the retro / football-culture spirit of the site, and
+      affiliate relationships never change the model's output. Links are marked <code>#Ad</code> in
+      line with the ACCC's guidance on disclosure.</p>
+
+    <footer>
+      <p>© 2026 Samuel Bowey · WCPA. Data: martj42 · TheSportsDB · StatsBomb · BBC ·
+        Guardian · Sky · ESPN. <a href="/">← back to the album</a></p>
+    </footer>
+  </div>
+</body>
+</html>

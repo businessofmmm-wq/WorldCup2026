@@ -1,0 +1,257 @@
+"""
+Leakage-free walk-forward backtest for the match models.
+
+This is the measurement foundation: without it, "most accurate" is unfalsifiable.
+For every finished international in a held-out test window we produce the
+prediction the engine *would* have made knowing only what happened before that
+match, then score it (RPS / log-loss / Brier / accuracy / calibration).
+
+Two honest streams, aligned per match:
+
+  * Elo — replayed chronologically over all history; the prediction for each
+    match is read off the ratings as they stand BEFORE that match is folded in
+    (predict-before-update). Naturally leakage-free in a single pass.
+
+  * Dixon-Coles — a batch MLE fit, so it is refit periodically (`refit_days`)
+    across the test window. Each refit (`poisson.fit_params`) is anchored at its
+    as-of date and only ever sees matches strictly before it, with the time-decay
+    clock reset to that date. Refits warm-start from the previous fit, so the
+    whole walk stays fast.
+
+The ensemble simply blends the two aligned 1X2 vectors. Naive baselines (uniform
+and the pre-test base rate, split by neutral) are scored too, so we can see how
+much real signal the models add.
+"""
+from __future__ import annotations
+import datetime as dt
+
+import config
+from db import connect
+from models import metrics
+from models.elo import _k_for, _gd_multiplier
+from models import poisson as poisson_mod
+
+ELO_START = config.ELO_START
+_DRAW_MAX = 0.30  # mirrors predict._DRAW_MAX (Elo closeness -> draw mass)
+
+
+# --------------------------------------------------------------------------- #
+# Data
+# --------------------------------------------------------------------------- #
+def load_matches() -> list[tuple]:
+    """All finished matches, chronological: (date, home, away, hs, as, tourn, neutral)."""
+    with connect() as conn:
+        return conn.execute(
+            """
+            SELECT match_date, home_team, away_team, home_score, away_score,
+                   tournament, neutral
+            FROM matches
+            WHERE status='finished' AND home_score IS NOT NULL
+                  AND away_score IS NOT NULL
+            ORDER BY match_date, id
+            """
+        ).fetchall()
+
+
+# --------------------------------------------------------------------------- #
+# Elo stream (predict-before-update, parametrised for tuning)
+# --------------------------------------------------------------------------- #
+def _elo_1x2(ra: float, rb: float, neutral: bool, home_adv: float,
+             draw_max: float) -> tuple[float, float, float]:
+    """1X2 from two Elo ratings — identical maths to predict.elo_1x2."""
+    ha = 0.0 if neutral else home_adv
+    e = 1.0 / (1.0 + 10 ** ((rb - ra - ha) / 400.0))
+    p_draw = max(0.0, draw_max * (1.0 - 2.0 * abs(e - 0.5)))
+    p_home = max(0.0, e - 0.5 * p_draw)
+    p_away = max(0.0, (1.0 - e) - 0.5 * p_draw)
+    s = p_home + p_draw + p_away
+    return (p_home / s, p_draw / s, p_away / s)
+
+
+def elo_replay(matches: list[tuple], *, k_scale: float = config.ELO_K_SCALE,
+               home_adv: float = config.ELO_HOME_ADVANTAGE,
+               draw_max: float = config.ELO_DRAW_MAX, gd: bool = True,
+               draw_fn=None) -> list[tuple]:
+    """Replay all matches; return a per-match Elo 1X2 aligned to `matches`.
+
+    `draw_fn(elo_diff, neutral) -> (ph, pd, pa)` overrides the built-in closeness
+    draw model when supplied (used by the empirical draw model in Phase 2).
+    """
+    elo: dict[str, float] = {}
+    probs: list[tuple] = []
+    for d, home, away, hs, as_, tourn, neutral in matches:
+        ra = elo.get(home, ELO_START)
+        rb = elo.get(away, ELO_START)
+        if draw_fn is not None:
+            diff = (ra + (0.0 if neutral else home_adv)) - rb
+            probs.append(draw_fn(diff, neutral))
+        else:
+            probs.append(_elo_1x2(ra, rb, neutral, home_adv, draw_max))
+        # fold the result in (post-prediction) — this is the update step
+        ha = 0.0 if neutral else home_adv
+        exp_home = 1.0 / (1.0 + 10 ** ((rb - ra - ha) / 400.0))
+        sh = 1.0 if hs > as_ else (0.0 if hs < as_ else 0.5)
+        mult = _gd_multiplier(hs - as_) if gd else 1.0
+        k = _k_for(tourn) * k_scale * mult
+        delta = k * (sh - exp_home)
+        elo[home] = ra + delta
+        elo[away] = rb - delta
+    return probs
+
+
+# --------------------------------------------------------------------------- #
+# Dixon-Coles walk-forward
+# --------------------------------------------------------------------------- #
+def dc_walkforward(matches: list[tuple], test_start: dt.date, *,
+                   refit_days: int = 45, recent_years: int = config.DC_RECENT_YEARS,
+                   half_life: float = config.DC_HALF_LIFE_DAYS,
+                   reg: float = config.DC_REG, rho: float = config.DC_RHO,
+                   iters_cold: int = config.DC_ITERS, iters_warm: int = 60,
+                   warm: bool = True) -> dict[int, tuple]:
+    """Honest DC 1X2 for every test match: {match_index: (ph, pd, pa)}.
+
+    Refits at most every `refit_days`; each fit sees only matches strictly before
+    its as-of date. Returns a dict keyed by the match's index in `matches`.
+    """
+    dc_rows = [(d, h, a, hs, as_, neu) for d, h, a, hs, as_, tourn, neu in matches]
+    out: dict[int, tuple] = {}
+    model = None
+    next_refit = test_start
+    for i, (d, home, away, hs, as_, tourn, neutral) in enumerate(matches):
+        if d < test_start:
+            continue
+        if model is None or d >= next_refit:
+            lo = d - dt.timedelta(days=365 * recent_years)
+            window = [r for r in dc_rows if lo <= r[0] < d]
+            model = poisson_mod.fit_params(
+                window, d, half_life=half_life, reg=reg, rho=rho,
+                iters=(iters_cold if model is None else iters_warm),
+                init=(model if warm else None))
+            next_refit = d + dt.timedelta(days=refit_days)
+        pr = model.predict(home, away, neutral=neutral)
+        out[i] = (pr["p_home"], pr["p_draw"], pr["p_away"])
+    return out
+
+
+# --------------------------------------------------------------------------- #
+# Baselines
+# --------------------------------------------------------------------------- #
+def base_rates(matches: list[tuple], test_start: dt.date) -> dict[bool, tuple]:
+    """Empirical H/D/A split from PRE-test matches, keyed by neutral flag."""
+    agg = {False: [0, 0, 0, 0], True: [0, 0, 0, 0]}  # [H, D, A, N]
+    for d, home, away, hs, as_, tourn, neutral in matches:
+        if d >= test_start:
+            break
+        o = metrics.outcome_index(hs, as_)
+        agg[bool(neutral)][o] += 1
+        agg[bool(neutral)][3] += 1
+    rates = {}
+    for neu, (h, dr, a, n) in agg.items():
+        n = n or 1
+        rates[neu] = (h / n, dr / n, a / n)
+    return rates
+
+
+# --------------------------------------------------------------------------- #
+# Assemble + score
+# --------------------------------------------------------------------------- #
+def _temper(p, t):
+    if t == 1.0:
+        return p
+    inv = 1.0 / t
+    q = [max(p[k], 1e-9) ** inv for k in range(3)]
+    s = sum(q)
+    return tuple(x / s for x in q)
+
+
+def build_streams(matches, test_start, *, ensemble_weight=None,
+                  elo_kw=None, dc_kw=None, temperature=None) -> dict:
+    """Run both models and return aligned per-match streams over the test window.
+
+    Each stream is a list of (date, neutral, probs, outcome). `ensemble_weight`
+    is the Elo weight w (DC weight = 1-w); defaults to the config blend. The
+    ensemble stream has the calibration `temperature` applied (production-faithful).
+    """
+    if ensemble_weight is None:
+        we, wd = config.ENSEMBLE_ELO_WEIGHT, config.ENSEMBLE_DC_WEIGHT
+        ensemble_weight = we / (we + wd)
+    if temperature is None:
+        temperature = config.ENSEMBLE_TEMPERATURE
+    w = ensemble_weight
+    elo_probs = elo_replay(matches, **(elo_kw or {}))
+    dc_probs = dc_walkforward(matches, test_start, **(dc_kw or {}))
+    rates = base_rates(matches, test_start)
+
+    elo_s, dc_s, ens_s, base_s, unif_s = [], [], [], [], []
+    for i, (d, home, away, hs, as_, tourn, neutral) in enumerate(matches):
+        if d < test_start or i not in dc_probs:
+            continue
+        o = metrics.outcome_index(hs, as_)
+        ep = elo_probs[i]
+        dp = dc_probs[i]
+        en = _temper(tuple(w * ep[k] + (1.0 - w) * dp[k] for k in range(3)), temperature)
+        elo_s.append((d, neutral, ep, o))
+        dc_s.append((d, neutral, dp, o))
+        ens_s.append((d, neutral, en, o))
+        base_s.append((d, neutral, rates[bool(neutral)], o))
+        unif_s.append((d, neutral, (1 / 3, 1 / 3, 1 / 3), o))
+    return {"elo": elo_s, "dc": dc_s, "ensemble": ens_s,
+            "base_rate": base_s, "uniform": unif_s}
+
+
+def _pairs(stream, lo=None, hi=None):
+    """Extract (probs, outcome), optionally restricted to a [lo, hi) date slice."""
+    out = []
+    for d, neutral, p, o in stream:
+        if lo is not None and d < lo:
+            continue
+        if hi is not None and d >= hi:
+            continue
+        out.append((p, o))
+    return out
+
+
+def report(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
+    """Run the baseline backtest and print the metrics table. Returns streams."""
+    if test_start is None:
+        test_start = dt.date(2018, 1, 1)
+    print(f"Backtest - test window from {test_start} (DC refit every {refit_days}d)\n")
+    matches = load_matches()
+    # Production-faithful Elo 1X2: ordered-logit draw model, fit leakage-free on
+    # matches strictly before the test window (falls back to the linear model if
+    # the draw model can't be fit).
+    elo_kw = {}
+    try:
+        from models import draw_model
+        params = draw_model.fit(samples=draw_model.collect_samples(upto=test_start),
+                                persist=False, verbose=False)
+        elo_kw["draw_fn"] = lambda d, n: draw_model.probs(d, *params)
+    except Exception:
+        pass
+    streams = build_streams(matches, test_start, elo_kw=elo_kw,
+                            dc_kw={"refit_days": refit_days})
+
+    order = ["uniform", "base_rate", "elo", "dc", "ensemble"]
+    label = {"uniform": "Uniform (1/3)", "base_rate": "Base rate",
+             "elo": "Elo", "dc": "Dixon-Coles", "ensemble": "Ensemble"}
+    print(f"  {'Model':<16}{'N':>7}{'RPS':>9}{'LogLoss':>10}{'Brier':>9}{'Acc':>8}")
+    print("  " + "-" * 58)
+    results = {}
+    for key in order:
+        m = metrics.score_stream(_pairs(streams[key]))
+        results[key] = m
+        print(f"  {label[key]:<16}{m['n']:>7}{m['rps']:>9.4f}"
+              f"{m['log_loss']:>10.4f}{m['brier']:>9.4f}{m['acc']:>8.3f}")
+    print()
+    # calibration of the ensemble (home class) + overall reliability error
+    ece = metrics.reliability_error(_pairs(streams["ensemble"]))
+    print(f"  Ensemble calibration error (mean abs, 3 classes): {ece:.4f}")
+    print("  Ensemble reliability (home win):")
+    print(f"    {'pred-bin':<14}{'mean_pred':>10}{'emp_freq':>10}{'n':>8}")
+    for lo, hi, mp, ef, n in metrics.calibration(_pairs(streams["ensemble"]), cls=metrics.HOME):
+        print(f"    {f'{lo:.1f}-{hi:.1f}':<14}{mp:>10.3f}{ef:>10.3f}{n:>8}")
+    return {"streams": streams, "results": results, "test_start": test_start}
+
+
+if __name__ == "__main__":
+    report()

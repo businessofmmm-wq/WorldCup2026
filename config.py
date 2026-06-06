@@ -9,14 +9,45 @@ from __future__ import annotations
 import os
 
 # --------------------------------------------------------------------------- #
+# Local .env loader (no dependency — keeps the tiny-deps ethos)
+# --------------------------------------------------------------------------- #
+# Secrets (the database URL, optional API keys) live in a gitignored .env file
+# at the project root, never in source. Load it into the environment before any
+# config value is read. Real environment variables always win over .env, so
+# production/CI can override by exporting the var. See .env.example for format.
+def _load_dotenv(path: str) -> None:
+    try:
+        with open(path, encoding="utf-8-sig") as fh:  # utf-8-sig tolerates a BOM
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, val = line.partition("=")
+                # strip surrounding quotes if present; do not override real env
+                os.environ.setdefault(key.strip(), val.strip().strip('"').strip("'"))
+    except FileNotFoundError:
+        pass
+
+
+_load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+
+# --------------------------------------------------------------------------- #
 # Database
 # --------------------------------------------------------------------------- #
-# Same role/server as the rest of the stack, dedicated `worldcup` database.
+# The connection string comes from the environment (WORLDCUP_DATABASE_URL, or
+# the shared DATABASE_URL), normally via the local .env file. No credential is
+# baked into source — the same code points at a managed cloud Postgres in
+# production just by setting the env var.
 DATABASE_URL = (
     os.environ.get("WORLDCUP_DATABASE_URL")
     or os.environ.get("DATABASE_URL")
-    or "postgresql://mmm_app:mmm_local_dev@localhost:5432/worldcup"
 )
+if not DATABASE_URL:
+    raise RuntimeError(
+        "No database URL configured. Set WORLDCUP_DATABASE_URL (or DATABASE_URL) "
+        "in your environment, or create a .env file at the project root. "
+        "Copy .env.example to .env and fill in your local Postgres credentials."
+    )
 
 # --------------------------------------------------------------------------- #
 # Data sources (all public / free)
@@ -53,6 +84,9 @@ NEWS_FEEDS = [
 # Elo — tuned to the widely used World Football Elo Ratings conventions.
 ELO_START = 1500.0          # rating for a previously unseen team
 ELO_HOME_ADVANTAGE = 65.0   # points added to the home side (0 on neutral grounds)
+ELO_K_SCALE = 1.0           # global multiplier on every K-factor (backtest-tuned)
+ELO_DRAW_MAX = 0.30         # max draw mass for an evenly-matched tie (Elo 1X2 model)
+ELO_USE_GD = True           # scale K by the goal-difference multiplier
 
 # K-factor scales by tournament importance (World Football Elo weights).
 ELO_K_BY_TOURNAMENT = {
@@ -82,6 +116,9 @@ DC_REG = 0.08               # L2 shrinkage on attack/defence (curbs minnow overf
 # Ensemble weighting between the Elo 1X2 and the Dixon-Coles 1X2.
 ENSEMBLE_ELO_WEIGHT = 0.45
 ENSEMBLE_DC_WEIGHT = 0.55
+# Final temperature applied to the blended 1X2 (p_i ** (1/T), renormalised).
+# T<1 sharpens, T>1 softens; 1.0 = no-op. Fit by `run.py calibrate`.
+ENSEMBLE_TEMPERATURE = 1.0
 
 # Monte Carlo.
 SIM_RUNS = 20000
@@ -92,3 +129,25 @@ SIM_RUNS = 20000
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
+
+# --------------------------------------------------------------------------- #
+# Backtest-tuned overrides
+# --------------------------------------------------------------------------- #
+# `python run.py tune` writes data/tuned_params.json with the parameter set that
+# minimised held-out RPS. If present, it overrides the defaults above so the
+# tuned model flows straight into predict / train / simulate. Delete the file to
+# revert to the hand-set defaults. Keys map 1:1 to the constants below.
+_TUNABLE = {
+    "ELO_K_SCALE", "ELO_HOME_ADVANTAGE", "ELO_DRAW_MAX", "ELO_USE_GD",
+    "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
+    "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
+}
+_TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")
+try:
+    import json as _json
+    with open(_TUNED_FILE, encoding="utf-8") as _fh:
+        for _k, _v in _json.load(_fh).items():
+            if _k in _TUNABLE:
+                globals()[_k] = _v
+except (FileNotFoundError, ValueError):
+    pass

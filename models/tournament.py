@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import datetime as dt
 from collections import defaultdict
 
 import config
@@ -115,8 +116,8 @@ class Tournament:
         """Play one whole tournament; return reached-stage per team."""
         stage = {t: "group" for g in groups.values() for t in g}
         group_tables = {}
-        thirds = []
-        winners, runners = [], []
+        thirds = []                       # (group, team, pts, gd, gf)
+        win_by_g, run_by_g = {}, {}
 
         for g, teams in groups.items():
             stats = {t: {"pts": 0, "gd": 0, "gf": 0} for t in teams}
@@ -129,31 +130,74 @@ class Tournament:
                                                   stats[t]["gf"], self.rng.random()),
                             reverse=True)
             group_tables[g] = ranked
-            winners.append(ranked[0])
-            runners.append(ranked[1])
-            third = ranked[2]
-            thirds.append((third, stats[third]["pts"], stats[third]["gd"], stats[third]["gf"]))
+            win_by_g[g] = ranked[0]
+            run_by_g[g] = ranked[1]
+            t3 = ranked[2]
+            thirds.append((g, t3, stats[t3]["pts"], stats[t3]["gd"], stats[t3]["gf"]))
 
-        best_thirds = [t for t, *_ in sorted(
-            thirds, key=lambda x: (x[1], x[2], x[3], self.rng.random()), reverse=True)[:8]]
+        best = sorted(thirds, key=lambda x: (x[2], x[3], x[4], self.rng.random()),
+                      reverse=True)[:8]
+        third_groups = {g: t for g, t, *_ in best}     # group letter -> team
 
-        r32 = winners + runners + best_thirds          # 32 teams
-        for t in r32:
+        for t in (list(win_by_g.values()) + list(run_by_g.values())
+                  + list(third_groups.values())):
             stage[t] = "r32"
 
-        # Bracket: shuffle the 32 into 16 ties (a fair proxy for the seeding map).
-        self.rng.shuffle(r32)
-        rounds = [("r16", 16), ("qf", 8), ("sf", 4), ("final", 2), ("champion", 1)]
-        survivors = r32
-        for name, _size in rounds:
-            nxt = []
-            for k in range(0, len(survivors), 2):
-                w = self._knockout(survivors[k], survivors[k + 1])
-                nxt.append(w)
-            for t in nxt:
-                stage[t] = name
-            survivors = nxt
-        return {"stage": stage, "champion": survivors[0], "groups": group_tables}
+        champion = self._play_bracket(win_by_g, run_by_g, third_groups, stage)
+        return {"stage": stage, "champion": champion, "groups": group_tables}
+
+    def _assign_thirds(self, third_groups: dict) -> dict:
+        """Map the eight 'T##' slots to third-placed teams, respecting Annex C.
+
+        Backtracking with a most-constrained-slot heuristic; FIFA's allowed-group
+        ranges guarantee a valid assignment exists for any set of eight qualifying
+        third-place groups.
+        """
+        allowed = field_2026.ALLOWED_THIRDS
+        avail = list(third_groups.keys())
+        assign: dict[str, str] = {}
+
+        def backtrack(remaining, used):
+            if not remaining:
+                return True
+            remaining.sort(key=lambda s: sum(
+                1 for g in avail if g in allowed[s] and g not in used))
+            s = remaining[0]
+            cands = [g for g in avail if g in allowed[s] and g not in used]
+            self.rng.shuffle(cands)
+            for g in cands:
+                assign[s] = g
+                if backtrack(remaining[1:], used | {g}):
+                    return True
+                del assign[s]
+            return False
+
+        if not backtrack(list(allowed.keys()), set()):
+            free = [g for g in avail if g not in assign.values()]   # defensive
+            for s in allowed:
+                if s not in assign:
+                    assign[s] = free.pop()
+        return {s: third_groups[g] for s, g in assign.items()}
+
+    def _play_bracket(self, win_by_g, run_by_g, third_groups, stage) -> str:
+        """Play the fixed 2026 bracket; update `stage` per team, return champion."""
+        slot = {}
+        for g in win_by_g:
+            slot["1" + g] = win_by_g[g]
+            slot["2" + g] = run_by_g[g]
+        slot.update(self._assign_thirds(third_groups))
+
+        results = {}
+        for m, s1, s2 in field_2026.R32:
+            w = self._knockout(slot[s1], slot[s2])
+            results[m] = w
+            stage[w] = "r16"
+        for m in (89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 104):
+            s1, s2 = field_2026.BRACKET[m]
+            w = self._knockout(results[s1], results[s2])
+            results[m] = w
+            stage[w] = field_2026.WINNER_STAGE[m]
+        return results[104]
 
     @staticmethod
     def _apply(stats, h, a, hs, as_):
@@ -238,6 +282,7 @@ class Tournament:
         ranked = sorted(probs.items(), key=lambda kv: kv[1]["p_win"], reverse=True)
         sim_report = {
             "runs": runs,
+            "generated": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "groups": {g: teams for g, teams in groups.items()},
             "title_odds": [
                 {"team": t, "p_win": p["p_win"], "p_final": p["p_final"],

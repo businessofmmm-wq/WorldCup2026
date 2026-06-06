@@ -16,18 +16,25 @@ import config
 from db import connect
 from models import elo as elo_mod
 from models import poisson as poisson_mod
+from models import draw_model
 
 # Empirical maximum draw probability for an evenly matched international.
-_DRAW_MAX = 0.30
+_DRAW_MAX = config.ELO_DRAW_MAX
+# Ordered-logit draw model params (b, k1, k2), if it has been fit; else None ->
+# fall back to the linear closeness model below.
+_DRAW = draw_model.load()
 
 
 def elo_1x2(elo: dict, home: str, away: str, neutral: bool = True) -> dict:
     ra = elo.get(home, config.ELO_START)
     rb = elo.get(away, config.ELO_START)
     ha = 0.0 if neutral else config.ELO_HOME_ADVANTAGE
+    if _DRAW is not None:   # empirical ordered-logit mapping (preferred)
+        ph, pd, pa = draw_model.probs((ra + ha) - rb, *_DRAW)
+        return {"p_home": ph, "p_draw": pd, "p_away": pa}
     e = elo_mod.expected_score(ra + ha, rb)   # home win expectancy (draw=½)
     # draw probability shrinks linearly as the mismatch grows
-    p_draw = max(0.0, _DRAW_MAX * (1.0 - 2.0 * abs(e - 0.5)))
+    p_draw = max(0.0, config.ELO_DRAW_MAX * (1.0 - 2.0 * abs(e - 0.5)))
     p_home = max(0.0, e - 0.5 * p_draw)
     p_away = max(0.0, (1.0 - e) - 0.5 * p_draw)
     s = p_home + p_draw + p_away
@@ -49,8 +56,7 @@ class Predictor:
         p_home = (we * e["p_home"] + wd * dc["p_home"]) / wsum
         p_draw = (we * e["p_draw"] + wd * dc["p_draw"]) / wsum
         p_away = (we * e["p_away"] + wd * dc["p_away"]) / wsum
-        s = p_home + p_draw + p_away
-        p_home, p_draw, p_away = p_home / s, p_draw / s, p_away / s
+        p_home, p_draw, p_away = _temper(p_home, p_draw, p_away)
 
         result = {
             "home": home, "away": away, "neutral": neutral,
@@ -79,6 +85,19 @@ class Predictor:
                  r["p_draw"], r["p_away"], r["exp_home_goals"], r["exp_away_goals"],
                  r["top_scoreline"], json.dumps(r["components"])),
             )
+
+
+def _temper(p_home: float, p_draw: float, p_away: float) -> tuple[float, float, float]:
+    """Apply the calibration temperature and renormalise to a probability triple."""
+    t = config.ENSEMBLE_TEMPERATURE
+    if t == 1.0:
+        s = p_home + p_draw + p_away
+        return p_home / s, p_draw / s, p_away / s
+    inv = 1.0 / t
+    qh, qd, qa = (max(p_home, 1e-9) ** inv, max(p_draw, 1e-9) ** inv,
+                  max(p_away, 1e-9) ** inv)
+    s = qh + qd + qa
+    return qh / s, qd / s, qa / s
 
 
 def _load_elo() -> dict:

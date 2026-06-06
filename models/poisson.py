@@ -25,6 +25,17 @@ from db import connect
 
 _PARAMS_FILE = os.path.join(config.DATA_DIR, "dc_params.json")
 
+# Attack/defence are log-scale; real teams live well inside +/-2. Clamping to this
+# band each iteration keeps the gradient-ascent fit from diverging on sparse
+# minnows (a single in-window blowout can otherwise blow a strength up without
+# bound). It never binds for genuine sides, so fitted ratings are unaffected.
+_AB_CLAMP = 3.0
+
+
+def _safe_exp(x: float) -> float:
+    """math.exp guarded against overflow on a runaway log-rate."""
+    return math.exp(x if x < 30.0 else 30.0)
+
 
 def _poisson_pmf(k: int, lam: float) -> float:
     if lam <= 0:
@@ -48,11 +59,13 @@ def _tau(x: int, y: int, lh: float, la: float, rho: float) -> float:
 class GoalsModel:
     """Holds fitted parameters and produces scoreline grids for fixtures."""
 
-    def __init__(self, attack, defence, mu, gamma):
+    def __init__(self, attack, defence, mu, gamma, rho: float | None = None):
         self.attack = attack      # {team: float}
         self.defence = defence    # {team: float}
         self.mu = mu              # baseline log goal rate
         self.gamma = gamma        # home advantage (log scale)
+        # low-score (tau) correlation correction; tunable per-model, defaults to config
+        self.rho = config.DC_RHO if rho is None else rho
 
     # -- expected goals ---------------------------------------------------- #
     def expected_goals(self, home: str, away: str, neutral: bool = True):
@@ -61,8 +74,8 @@ class GoalsModel:
         a_a = self.attack.get(away, 0.0)
         d_a = self.defence.get(away, 0.0)
         g = 0.0 if neutral else self.gamma
-        lam_h = math.exp(self.mu + g + a_h - d_a)
-        lam_a = math.exp(self.mu + a_a - d_h)
+        lam_h = _safe_exp(self.mu + g + a_h - d_a)
+        lam_a = _safe_exp(self.mu + a_a - d_h)
         return lam_h, lam_a
 
     # -- scoreline grid + 1X2 --------------------------------------------- #
@@ -76,7 +89,7 @@ class GoalsModel:
         total = 0.0
         for i in range(max_goals + 1):
             for j in range(max_goals + 1):
-                p = ph[i] * pa[j] * _tau(i, j, lam_h, lam_a, config.DC_RHO)
+                p = ph[i] * pa[j] * _tau(i, j, lam_h, lam_a, self.rho)
                 p = max(p, 0.0)
                 grid[i][j] = p
                 total += p
@@ -128,51 +141,69 @@ def _load_matches():
         ).fetchall()
 
 
-def fit(persist: bool = True, verbose: bool = True) -> GoalsModel:
-    rows = _load_matches()
-    if not rows:
-        raise RuntimeError("No matches to fit on — run ingestion first.")
+def fit_params(data, as_of: dt.date, *, half_life: float | None = None,
+               reg: float | None = None, iters: int | None = None,
+               lr: float | None = None, rho: float | None = None,
+               init: "GoalsModel | None" = None, verbose: bool = False) -> "GoalsModel":
+    """Fit Dixon-Coles attack/defence by MLE on `data`, time-decayed to `as_of`.
 
-    today = dt.date.today()
-    half_life = config.DC_HALF_LIFE_DAYS
+    `data` is a list of (match_date, home, away, home_score, away_score, neutral)
+    rows already filtered to the desired window. Decay weights are anchored at
+    `as_of` (NOT today), which is what makes a leakage-free walk-forward possible:
+    every fit only ever sees matches strictly before its as-of date. `init` warm-
+    starts from a previous fit so successive refits converge in far fewer
+    iterations. Does NOT touch the database — callers persist if they want to.
+    """
+    half_life = config.DC_HALF_LIFE_DAYS if half_life is None else half_life
+    reg = config.DC_REG if reg is None else reg
+    iters = config.DC_ITERS if iters is None else iters
+    lr = config.DC_LR if lr is None else lr
+
     teams = set()
-    data = []  # (home, away, hs, as, neutral, weight)
-    for d, home, away, hs, as_, neutral in rows:
-        age_days = (today - d).days
+    rows = []  # (home, away, hs, as_, neutral, weight)
+    for d, home, away, hs, as_, neutral in data:
+        age_days = (as_of - d).days
+        if age_days < 0:
+            continue  # guard: never let a fit see a future match
         w = 0.5 ** (age_days / half_life)  # exponential time decay
-        data.append((home, away, hs, as_, neutral, w))
+        rows.append((home, away, hs, as_, neutral, w))
         teams.add(home)
         teams.add(away)
+    if not rows:
+        raise RuntimeError("fit_params: no in-window matches to fit on")
 
-    attack = {t: 0.0 for t in teams}
-    defence = {t: 0.0 for t in teams}
-    total_goals = sum(r[2] + r[3] for r in data)
-    n_sides = 2 * len(data)
-    mu = math.log(max(total_goals / n_sides, 0.1))
-    gamma = 0.25  # sensible starting home advantage
+    if init is not None:  # warm start from a previous fit
+        attack = {t: init.attack.get(t, 0.0) for t in teams}
+        defence = {t: init.defence.get(t, 0.0) for t in teams}
+        mu, gamma = init.mu, init.gamma
+    else:
+        attack = {t: 0.0 for t in teams}
+        defence = {t: 0.0 for t in teams}
+        total_goals = sum(r[2] + r[3] for r in rows)
+        mu = math.log(max(total_goals / (2 * len(rows)), 0.1))
+        gamma = 0.25  # sensible starting home advantage
 
     # Per-parameter observation weight so each team's step is the AVERAGE
     # residual (not the raw sum) — converges fast regardless of how many
     # matches a team has. Use decayed weights as the effective sample size.
     w_team = {t: 0.0 for t in teams}
     w_nonneutral = 0.0
-    for home, away, hs, as_, neutral, w in data:
+    for home, away, hs, as_, neutral, w in rows:
         w_team[home] += w
         w_team[away] += w
         if not neutral:
             w_nonneutral += w
     w_total = sum(w_team.values())
 
-    lr = config.DC_LR
-    for it in range(config.DC_ITERS):
+    for it in range(iters):
         g_att = {t: 0.0 for t in teams}
         g_def = {t: 0.0 for t in teams}
         g_mu = 0.0
         g_gamma = 0.0
-        for home, away, hs, as_, neutral, w in data:
+        for home, away, hs, as_, neutral, w in rows:
             ha = 0.0 if neutral else gamma
-            lam_h = math.exp(mu + ha + attack[home] - defence[away])
-            lam_a = math.exp(mu + attack[away] - defence[home])
+            lam_h = _safe_exp(mu + ha + attack[home] - defence[away])
+            lam_a = _safe_exp(mu + attack[away] - defence[home])
             r_h = w * (hs - lam_h)   # gradient of Poisson ll wrt log-rate
             r_a = w * (as_ - lam_a)
             g_att[home] += r_h
@@ -183,7 +214,6 @@ def fit(persist: bool = True, verbose: bool = True) -> GoalsModel:
             if not neutral:
                 g_gamma += r_h
         # gradient ascent step, normalised per-parameter by its sample weight
-        reg = config.DC_REG
         for t in teams:
             wt = w_team[t] or 1.0
             attack[t] += lr * (g_att[t] / wt - reg * attack[t])
@@ -192,29 +222,30 @@ def fit(persist: bool = True, verbose: bool = True) -> GoalsModel:
         if w_nonneutral:
             gamma += lr * g_gamma / w_nonneutral
         gamma = max(0.0, min(gamma, 1.0))
-        # re-centre for identifiability
+        # re-centre for identifiability, then clamp to keep sparse-team fits stable
         ma = sum(attack.values()) / len(teams)
         md = sum(defence.values()) / len(teams)
         for t in teams:
-            attack[t] -= ma
-            defence[t] -= md
+            attack[t] = max(-_AB_CLAMP, min(_AB_CLAMP, attack[t] - ma))
+            defence[t] = max(-_AB_CLAMP, min(_AB_CLAMP, defence[t] - md))
 
     if verbose:
-        print(f"  Dixon-Coles fit: {len(data):,} matches, {len(teams)} teams, "
-              f"mu={mu:.3f}, home_adv={gamma:.3f}")
+        print(f"  Dixon-Coles fit @ {as_of}: {len(rows):,} matches, {len(teams)} "
+              f"teams, mu={mu:.3f}, home_adv={gamma:.3f}")
+    return GoalsModel(attack, defence, mu, gamma, rho=rho)
 
-    model = GoalsModel(attack, defence, mu, gamma)
+
+def fit(persist: bool = True, verbose: bool = True) -> GoalsModel:
+    rows = _load_matches()
+    if not rows:
+        raise RuntimeError("No matches to fit on — run ingestion first.")
+    model = fit_params(rows, dt.date.today(), verbose=verbose)
     if persist:
-        _persist(model, data, verbose)
+        _persist(model, verbose)
     return model
 
 
-def _persist(model: GoalsModel, data, verbose):
-    counts: dict[str, int] = {}
-    last: dict[str, dt.date] = {}
-    for home, away, *_ in data:
-        counts[home] = counts.get(home, 0) + 1
-        counts[away] = counts.get(away, 0) + 1
+def _persist(model: GoalsModel, verbose):
     with connect() as conn, conn.cursor() as cur:
         cur.executemany(
             """

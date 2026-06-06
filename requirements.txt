@@ -1,5 +1,11 @@
 # World Cup 2026 prediction engine — runtime dependencies.
-# Deliberately tiny: the models are pure Python (no numpy/scipy/pandas), so the
+# Deliberately tiny: the models are pure Python (no numpy/scipy/pandas) and the
+# dashboard rides on the standard-library http.server (no web framework), so the
 # whole thing runs on a stock interpreter + these two packages.
 requests>=2.31
 psycopg[binary]>=3.1
+
+# Build-time only (static-export tooling): original raster share-card generation
+# via `run.py ogcard`. The runtime site (static CDN) and the live http.server use none
+# of this — keep it out of any serving path.
+Pillow>=10

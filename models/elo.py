@@ -79,7 +79,8 @@ def compute(persist: bool = True, verbose: bool = True) -> dict[str, float]:
         else:
             score_home = 0.5
 
-        k = _k_for(tourn) * _gd_multiplier(hs - as_)
+        mult = _gd_multiplier(hs - as_) if config.ELO_USE_GD else 1.0
+        k = _k_for(tourn) * config.ELO_K_SCALE * mult
         delta = k * (score_home - exp_home)
 
         elo[home] = ra + delta

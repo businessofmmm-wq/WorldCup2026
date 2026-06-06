@@ -7,12 +7,19 @@ World Cup 2026 prediction engine — command line.
     python run.py ingest [what]          results | live | news | xg | all
     python run.py train                  recompute Elo + Dixon-Coles ratings
     python run.py predict HOME AWAY      single-fixture prediction (neutral)
+    python run.py backtest [year]        leakage-free accuracy backtest (RPS/etc)
+    python run.py tune                   grid-tune params on held-out RPS
+    python run.py calibrate              fit the ensemble temperature (held-out)
     python run.py simulate [runs]        Monte Carlo the whole tournament
     python run.py groups                 official 2026 final draw + group tables
     python run.py news [team]            latest tagged headlines
     python run.py rankings [n]           current Elo top-N
     python run.py refresh                live+news inflow -> retrain -> resim
     python run.py loop [secs]            run `refresh` forever every N seconds
+    python run.py viz [port]             launch the retro dashboard (default :8008)
+    python run.py export [dir]           snapshot the dashboard to static files (CDN)
+    python run.py loadtest [dir|url]     load-test the static build (spike proof)
+    python run.py ogcard                 (re)generate the original OG share card
 
 `refresh` is the inflow loop: pull the newest results/news, fold them into the
 ratings, and re-run the simulation so predictions always reflect latest data.
@@ -21,6 +28,15 @@ from __future__ import annotations
 import sys
 import time
 import datetime as dt
+
+# Windows consoles default to cp1252, which can't encode the emoji/arrows the
+# engine prints (e.g. the health date-range "->"). Force UTF-8 so the CLI never
+# dies on an encode error.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except (AttributeError, ValueError):  # non-reconfigurable stream — fine
+    pass
 
 import config
 import db
@@ -60,9 +76,16 @@ def cmd_ingest(args):
 
 
 def cmd_train(_args):
+    from models import draw_model
     print("[elo]"); elo_mod.compute()
+    print("[draw-model]"); draw_model.fit()
     print("[dixon-coles]"); poisson_mod.fit()
     print("training complete")
+
+
+def cmd_calibrate(_args):
+    from models import tune as tune_mod
+    tune_mod.calibrate()
 
 
 def cmd_predict(args):
@@ -73,6 +96,24 @@ def cmd_predict(args):
     p = Predictor()
     print(fmt(p.predict(home, away, neutral=neutral, log=True,
                         match_date=dt.date.today())))
+
+
+def cmd_backtest(args):
+    from models import backtest as bt
+    year = 2018
+    if args and args[0].isdigit():
+        year = int(args[0])
+    refit = 45
+    if "--refit" in args:
+        k = args.index("--refit")
+        if k + 1 < len(args) and args[k + 1].isdigit():
+            refit = int(args[k + 1])
+    bt.report(test_start=dt.date(year, 1, 1), refit_days=refit)
+
+
+def cmd_tune(_args):
+    from models import tune as tune_mod
+    tune_mod.run()
 
 
 def cmd_simulate(args):
@@ -112,11 +153,27 @@ def cmd_rankings(args):
 
 def cmd_refresh(_args):
     print(f"[{dt.datetime.now():%H:%M:%S}] inflow refresh")
-    src_live.ingest()
-    src_news.ingest(verbose=False)
-    elo_mod.compute(verbose=False)
-    poisson_mod.fit(verbose=False)
-    Tournament().run(runs=5000, verbose=True, persist=True)
+    from models import draw_model
+
+    steps = [
+        ("live", lambda: src_live.ingest()),
+        ("news", lambda: src_news.ingest(verbose=False)),
+        ("elo", lambda: elo_mod.compute(verbose=False)),
+        ("draw-model", lambda: draw_model.fit(verbose=False)),
+        ("dixon-coles", lambda: poisson_mod.fit(verbose=False)),
+        ("simulate", lambda: Tournament().run(runs=5000, verbose=True, persist=True)),
+    ]
+
+    for name, fn in steps:
+        try:
+            print(f"[{dt.datetime.now():%H:%M:%S}] {name}...")
+            res = fn()
+            if isinstance(res, dict):
+                print(f"  {name} ok: {res}")
+            else:
+                print(f"  {name} ok")
+        except Exception as exc:
+            print(f"  {name} failed: {exc}")
 
 
 def cmd_loop(args):
@@ -130,11 +187,35 @@ def cmd_loop(args):
         time.sleep(secs)
 
 
+def cmd_viz(args):
+    from viz.server import serve
+    port = int(args[0]) if args and args[0].isdigit() else 8008
+    serve(port=port)
+
+
+def cmd_export(args):
+    from viz import export as exporter
+    out = next((a for a in args if not a.startswith("-")), "dist")
+    exporter.build(out, matrix="--no-matrix" not in args)
+
+
+def cmd_loadtest(args):
+    from viz import loadtest
+    loadtest.main(args)
+
+
+def cmd_ogcard(args):
+    from viz import ogcard
+    ogcard.main(args)
+
+
 COMMANDS = {
     "health": cmd_health, "init": cmd_init, "ingest": cmd_ingest,
-    "train": cmd_train, "predict": cmd_predict, "simulate": cmd_simulate,
+    "train": cmd_train, "predict": cmd_predict, "backtest": cmd_backtest,
+    "tune": cmd_tune, "calibrate": cmd_calibrate, "simulate": cmd_simulate,
     "groups": cmd_groups, "news": cmd_news, "rankings": cmd_rankings,
-    "refresh": cmd_refresh, "loop": cmd_loop,
+    "refresh": cmd_refresh, "loop": cmd_loop, "viz": cmd_viz,
+    "export": cmd_export, "loadtest": cmd_loadtest, "ogcard": cmd_ogcard,
 }
 
 
