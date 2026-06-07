@@ -480,7 +480,17 @@ a { color: inherit; }
 
 /* ============================ RESPONSIVE ============================ */
 @media (max-width: 720px) {
-  .album-index { display: none; }
+  /* Don't hide navigation on mobile — turn the album index into a swipeable
+     strip on its own line so phone users can still jump between pages. */
+  .topbar { flex-wrap: wrap; gap: 10px 14px; }
+  .album-index {
+    order: 3; flex-basis: 100%; flex-wrap: nowrap;
+    overflow-x: auto; gap: 6px; padding-bottom: 2px;
+    scrollbar-width: none; -webkit-overflow-scrolling: touch;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+            mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  }
+  .album-index::-webkit-scrollbar { height: 0; }
   .podium { grid-template-columns: 1fr; }
   .podium .pod-1 .sticker { transform: none; }
   .clippings { columns: 1; }
@@ -494,4 +504,70 @@ a { color: inherit; }
   .mc-mid { order: 3; grid-column: 1 / -1; width: 100%; }
   .mc-nm { font-size: .9rem; max-width: 30vw; }
   .mc-side .flag-sm { width: 28px; height: 19px; }
+}
+
+/* =====================================================================
+   PRO POLISH  ·  accessibility, motion discipline, loading states
+   Additive layer — the rigor of a modern component system applied to the
+   hand-rolled retro UI (no framework, no dependency).
+   ===================================================================== */
+:root {
+  --ring: 0 0 0 3px rgba(227,165,18,.9), 0 0 0 5px rgba(42,29,18,.9);
+}
+
+/* ---- keyboard focus: a clear, on-brand ring everywhere (mouse users keep
+   the clean look via :focus-visible) ---- */
+a:focus-visible, button:focus-visible, select:focus-visible,
+input:focus-visible, [tabindex]:focus-visible, .rank-card:focus-visible {
+  outline: none; box-shadow: var(--ring); border-radius: 8px; position: relative; z-index: 5;
+}
+.album-index a:focus-visible { background: var(--gold); color: #20150c; }
+
+/* ---- skip link (first tab stop) ---- */
+.skip-link {
+  position: fixed; top: -60px; left: 12px; z-index: 100;
+  background: var(--gold); color: #20150c; border: 2px solid var(--card-edge);
+  font-family: var(--font-lab); letter-spacing: 1px; padding: 8px 16px; border-radius: 0 0 10px 10px;
+  transition: top .18s;
+}
+.skip-link:focus { top: 0; }
+
+/* ---- text selection + anchor offset under the sticky topbar ---- */
+::selection { background: var(--gold); color: #20150c; }
+.page, .cover { scroll-margin-top: 72px; }
+
+/* ---- thin reading-progress bar under the topbar ---- */
+.scroll-progress {
+  position: fixed; top: 0; left: 0; height: 3px; width: 0;
+  background: linear-gradient(90deg, var(--gold), var(--terra)); z-index: 40;
+  box-shadow: 0 0 6px rgba(210,84,27,.5); transition: width .08s linear;
+}
+
+/* ---- loading skeletons (replace the bare "loading…" text) ---- */
+.sk-row, .sk-card { border: 2.5px solid var(--cream-line); border-radius: 10px; background: var(--card); }
+.sk-row { height: 38px; margin-bottom: 9px; }
+.sk-card { height: 96px; }
+.sk-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px,1fr)); gap: 14px; }
+.sk-bar { height: 22px; }
+.skeleton { background: linear-gradient(90deg, var(--paper-2) 25%, var(--card) 37%, var(--paper-2) 63%);
+  background-size: 400% 100%; animation: sk 1.25s ease-in-out infinite; }
+
+/* ---- reveal-on-scroll (JS adds .will-reveal then .revealed; if JS or the
+   reduced-motion guard skips it, content stays fully visible) ---- */
+.will-reveal { opacity: 0; transform: translateY(14px); }
+.revealed { opacity: 1; transform: none; transition: opacity .5s ease, transform .5s ease; }
+
+/* ---- bracket: gentle scroll-snap + a swipe affordance on touch ---- */
+.bracket { scroll-snap-type: x proximity; }
+.bracket .col { scroll-snap-align: start; }
+
+/* ---- respect users who ask for less motion: kill every loop/transition ---- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important; scroll-behavior: auto !important;
+  }
+  html { scroll-behavior: auto; }
+  .foil::after { display: none; }
+  .will-reveal { opacity: 1; transform: none; }
 }

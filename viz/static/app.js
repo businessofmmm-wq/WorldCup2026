@@ -272,10 +272,28 @@ function sparkline(series) {
     </svg>
     <div class="rc-meta"><span>${first}</span><span>peak ${Math.round(mx)}</span><span>${last}</span></div>`;
 }
+// Expand/collapse a rank card's Elo-trajectory sparkline (shared by click + key).
+async function expandRank(card) {
+  const open = card.classList.toggle('open');
+  card.setAttribute('aria-expanded', open ? 'true' : 'false');
+  const box = $('.spark', card);
+  if (open && !box.dataset.loaded) {
+    box.innerHTML = '<div class="muted">loading trajectory…</div>';
+    try {
+      const series = STATE.static
+        ? (await loadHistory())[card.dataset.team]
+        : (await API(`/api/history?team=${encodeURIComponent(card.dataset.team)}`)).series;
+      box.innerHTML = series ? sparkline(series) : '<div class="muted">no history</div>';
+      box.dataset.loaded = '1';
+    } catch (e) { box.innerHTML = '<div class="muted">history unavailable</div>'; }
+  }
+}
 function renderRankings(data) {
   const rows = data.rankings || [];
   $('#rankBoard').innerHTML = rows.map(r => `
-    <div class="rank-card ${r.rank <= 3 ? 'top3' : ''}" data-team="${esc(r.team)}">
+    <div class="rank-card ${r.rank <= 3 ? 'top3' : ''}" data-team="${esc(r.team)}"
+         tabindex="0" role="button" aria-expanded="false"
+         aria-label="${esc(r.team)} — show Elo rating trajectory">
       <div class="rc-top">
         <span class="rc-rank">${r.rank}</span>
         ${flagHTML(r.flag, 'flag-sm', r.team)}
@@ -290,23 +308,12 @@ function renderRankings(data) {
       <div class="spark"></div>
     </div>`).join('');
 
-  $$('.rank-card').forEach(card => card.addEventListener('click', async () => {
-    const open = card.classList.toggle('open');
-    const box = $('.spark', card);
-    if (open && !box.dataset.loaded) {
-      box.innerHTML = '<div class="muted">loading trajectory…</div>';
-      try {
-        let series;
-        if (STATE.static) {
-          series = (await loadHistory())[card.dataset.team];
-        } else {
-          series = (await API(`/api/history?team=${encodeURIComponent(card.dataset.team)}`)).series;
-        }
-        box.innerHTML = series ? sparkline(series) : '<div class="muted">no history</div>';
-        box.dataset.loaded = '1';
-      } catch (e) { box.innerHTML = '<div class="muted">history unavailable</div>'; }
-    }
-  }));
+  $$('.rank-card').forEach(card => {
+    card.addEventListener('click', () => expandRank(card));
+    card.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); expandRank(card); }
+    });
+  });
 }
 
 // =========================================================================
@@ -491,7 +498,11 @@ function renderFixtures(data) {
 function paintFixtures() {
   const data = STATE.fixtures; if (!data) return;
   const tab = STATE.mcTab;
-  $$('.mc-tab').forEach(b => b.classList.toggle('active', b.dataset.mc === tab));
+  $$('.mc-tab').forEach(b => {
+    const on = b.dataset.mc === tab;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
   const list = (tab === 'completed' ? data.completed : data.upcoming) || [];
   if (!list.length) {
     $('#mcList').innerHTML = `<p class="loading">${tab === 'completed'
@@ -532,7 +543,7 @@ function renderKickoff(kickoffISO) {
 // hide that button.
 const LINKS = {
   tip:  'https://ko-fi.com/sambowey1110',              // Ko-fi tip jar (LIVE)
-  back: 'https://buy.stripe.com/test_aFa4gAdQW66vaA09sZ6kg00',  // Stripe Payment Link (TEST — a public URL, safe to embed). Swap test_ -> live link before publishing 9 Jun.
+  back: 'https://buy.stripe.com/dRm28s8AI8y0al7dan9k400',  // Stripe Payment Link (LIVE — a public, shareable URL; safe to embed. No secret/pk keys ever live here.)
 };
 function wireSupport() {
   const tip = $('#tipBtn'), back = $('#backBtn');
@@ -591,8 +602,9 @@ function scrollspy() {
   const obs = new IntersectionObserver(entries => {
     entries.forEach(e => {
       if (e.isIntersecting) {
-        links.forEach(l => l.classList.remove('active'));
-        map[e.target.id]?.classList.add('active');
+        links.forEach(l => { l.classList.remove('active'); l.removeAttribute('aria-current'); });
+        const a = map[e.target.id];
+        if (a) { a.classList.add('active'); a.setAttribute('aria-current', 'true'); }
       }
     });
   }, { rootMargin: '-45% 0px -50% 0px' });
@@ -601,10 +613,48 @@ function scrollspy() {
 }
 
 // =========================================================================
+//  POLISH  —  loading skeletons, scroll progress, reveal-on-scroll
+// =========================================================================
+const sk = (n, cls = 'sk-row') =>
+  Array.from({ length: n }, () => `<div class="${cls} skeleton"></div>`).join('');
+function skeletonFill() {
+  const set = (sel, html) => { const e = $(sel); if (e) e.innerHTML = html; };
+  set('#oddsList', sk(8, 'sk-row'));
+  set('#mcList', sk(4, 'sk-card'));
+  set('#groupsGrid', sk(6, 'sk-card'));
+  set('#rankBoard', sk(8, 'sk-card'));
+}
+function initScrollProgress() {
+  const bar = $('#scrollProgress'); if (!bar) return;
+  const upd = () => {
+    const h = document.documentElement;
+    const max = h.scrollHeight - h.clientHeight;
+    bar.style.width = (max > 0 ? (h.scrollTop / max) * 100 : 0) + '%';
+  };
+  document.addEventListener('scroll', upd, { passive: true });
+  window.addEventListener('resize', upd); upd();
+}
+function initReveal() {
+  // Progressive enhancement only: if motion is reduced or IO is missing, the
+  // sections never get .will-reveal, so they stay fully visible.
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !('IntersectionObserver' in window)) return;
+  const obs = new IntersectionObserver((entries, o) => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('revealed'); o.unobserve(e.target); } });
+  }, { rootMargin: '0px 0px -8% 0px', threshold: 0.04 });
+  $$('main > section.page').forEach(s => { s.classList.add('will-reveal'); obs.observe(s); });
+  // Safety net: whatever the observer hasn't reached after 3s, show anyway —
+  // content must never stay hidden behind the animation.
+  setTimeout(() => $$('.will-reveal').forEach(s => s.classList.add('revealed')), 3000);
+}
+
+// =========================================================================
 //  BOOT
 // =========================================================================
 async function boot() {
   scrollspy();
+  initScrollProgress();
+  skeletonFill();
+  initReveal();
 
   // CSP-safe flag fallback: <img> error events don't bubble, so catch them in
   // the capture phase and swap a broken flag for its data-fb text fallback

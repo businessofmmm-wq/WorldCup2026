@@ -507,6 +507,8 @@ class Handler(BaseHTTPRequestHandler):
     def _serve_static(self, path: str):
         if path in ("/", "/index.html"):
             rel = "index.html"
+        elif path == "/graph":          # convenience alias for the architecture page
+            rel = "graph.html"
         else:
             rel = path.lstrip("/")
         # Resolve against the static root and confirm the *real* path stays

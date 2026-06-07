@@ -47,9 +47,10 @@ has essentially no attack surface. Earliest publish: **9 June 2026, 08:00 AEST**
    add `wcpa26.com`. (If the domain is on Cloudflare, this is one click.)
 
 5. **Tip jar + Stripe** — ✓ **Ko-fi wired** (`ko-fi.com/sambowey1110`) and ✓ **Stripe
-   "Back the project" wired** via a Payment Link in `LINKS.back` (`viz/static/app.js`).
-   ⚠️ It's currently the **TEST** link (`buy.stripe.com/test_…`) — swap it for your
-   **live** Payment Link before publishing, then re-export.
+   "Back the project" wired** via the **LIVE** Payment Link in `LINKS.back`
+   (`viz/static/app.js`). Both are public, shareable URLs — safe to commit. The Stripe
+   *secret* (`rk_`/`sk_`) and the Ko-fi *webhook token* live only in `Desktop\Session1.txt`,
+   never in the repo or the static build. After any change here, re-export.
 
 6. **Affiliate shop** — join non-gambling programs that fit the brand (retro kits,
    football culture goods — e.g. an Amazon Associates tag, or a kit retailer's program).

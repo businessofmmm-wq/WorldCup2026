@@ -13,6 +13,7 @@ rate-limited and resumable. Default: the most recent World Cup available.
 """
 from __future__ import annotations
 import datetime as dt
+import re
 
 import requests
 
@@ -28,9 +29,25 @@ def _get(url: str):
     return resp.json()
 
 
-def seasons_for(comp_id: int) -> list[int]:
+def _season_year(name: str) -> int:
+    """Best-effort year from a StatsBomb season name ('2022', '2018', '2020/2021')."""
+    years = re.findall(r"\d{4}", name or "")
+    return max(int(y) for y in years) if years else -1
+
+
+def seasons_for(comp_id: int) -> list[dict]:
+    """Seasons for a competition, oldest→newest *by year* (so [-1] is the latest).
+
+    StatsBomb's `season_id`s are NOT chronological — sorting by id and taking the
+    last one grabbed the 1970 World Cup instead of 2022. We sort by the year parsed
+    from `season_name` instead. Returns [{'season_id', 'season_name'}]."""
     comps = _get(f"{config.STATSBOMB_BASE}/competitions.json")
-    return sorted({c["season_id"] for c in comps if c["competition_id"] == comp_id})
+    seen: dict[int, dict] = {}
+    for c in comps:
+        if c["competition_id"] == comp_id and c["season_id"] not in seen:
+            seen[c["season_id"]] = {"season_id": c["season_id"],
+                                    "season_name": c.get("season_name", "")}
+    return sorted(seen.values(), key=lambda s: _season_year(s["season_name"]))
 
 
 def matches_for(comp_id: int, season_id: int) -> list[dict]:
@@ -58,7 +75,10 @@ def ingest(comp_id: int | None = None, season_id: int | None = None,
         seasons = seasons_for(comp_id)
         if not seasons:
             return {"matches": 0, "note": "no seasons"}
-        season_id = seasons[-1]  # most recent World Cup available
+        latest = seasons[-1]  # most recent by year, not by (non-chronological) id
+        season_id = latest["season_id"]
+        if verbose:
+            print(f"  latest season: {latest['season_name']} (id {season_id})")
     matches = matches_for(comp_id, season_id)
     if limit:
         matches = matches[:limit]

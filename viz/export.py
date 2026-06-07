@@ -128,6 +128,18 @@ def _export_predict_matrix(api_dir: str) -> None:
     print(f"  api/predict_matrix.json  ({pairs} predictions, {kb:.0f} KB)   ")
 
 
+def _export_graph(dist: str) -> None:
+    """Regenerate the architecture graph data into the build so the deployed
+    /graph page reflects the current source (overwrites the copied placeholder)."""
+    try:
+        from tools import depgraph
+        model = depgraph.build_model(with_health=True)
+        depgraph.write_graph_data(model, os.path.join(dist, "graph_data.js"))
+        print(f"  graph_data.js  ({model['totals']['modules']} modules)")
+    except Exception as exc:                       # never fail a deploy over the graph
+        print(f"  graph export skipped: {exc}")
+
+
 def _copy_static(dist: str) -> None:
     static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
     for name in os.listdir(static):
@@ -231,6 +243,7 @@ def build(dist: str = "dist", matrix: bool = True) -> str:
     os.makedirs(api_dir, exist_ok=True)
     print(f"Exporting WCPA → {dist}")
     _copy_static(dist)
+    _export_graph(dist)
     _snapshot_endpoints(api_dir)
     _export_history(api_dir)
     if matrix:

@@ -30,6 +30,8 @@
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <div class="scroll-progress" id="scrollProgress" aria-hidden="true"></div>
   <!-- paper grain + halftone overlays (purely decorative) -->
   <div class="grain" aria-hidden="true"></div>
   <div class="halftone" aria-hidden="true"></div>
@@ -43,7 +45,7 @@
         <small class="brand-sub">WORLD&nbsp;CUP&nbsp;’26 · PREDICTION&nbsp;ALBUM</small>
       </span>
     </a>
-    <nav class="album-index" id="albumIndex">
+    <nav class="album-index" id="albumIndex" aria-label="Album sections">
       <a href="#odds">Odds</a>
       <a href="#matches">Matches</a>
       <a href="#wallchart">Wallchart</a>
@@ -54,14 +56,14 @@
       <a href="#method">Method</a>
     </nav>
     <div class="topbar-actions">
-      <button class="icon-btn" id="shareBtn" title="Share this album">⤴</button>
-      <button class="live-pill" id="livePill" title="Reload the latest model output">
+      <button class="icon-btn" id="shareBtn" title="Share this album" aria-label="Share this album">⤴</button>
+      <button class="live-pill" id="livePill" title="Reload the latest model output" aria-label="Reload the latest model output">
         <span class="dot"></span> LIVE
       </button>
     </div>
   </header>
 
-  <main>
+  <main id="main" tabindex="-1">
     <!-- ============================ COVER ============================ -->
     <section id="cover" class="cover">
       <div class="cover-inner">
@@ -98,11 +100,11 @@
         <h2>Match Centre</h2>
         <p class="page-tag">Every World Cup fixture, called by the model — win/draw/win, expected goals and the likeliest score. Results show whether the model called it. <b id="mcRecord"></b></p>
       </div>
-      <div class="mc-tabs">
-        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp">Upcoming</button>
-        <button class="mc-tab" data-mc="completed" id="mcTabDone">Results</button>
+      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
+        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="true" aria-controls="mcList">Upcoming</button>
+        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
       </div>
-      <div class="mc-list" id="mcList"><p class="loading">loading fixtures…</p></div>
+      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
     </section>
 
     <!-- ========================= WALLCHART ========================= -->
@@ -220,7 +222,7 @@
     <div class="foot-line muted">Flags via flagcdn (public domain). Data: martj42 · TheSportsDB · StatsBomb · BBC · Guardian · Sky · ESPN.</div>
   </footer>
 
-  <div class="toast" id="toast" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
   <script src="/app.js"></script>
 </body>
 </html>
