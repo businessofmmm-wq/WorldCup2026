@@ -21,6 +21,7 @@ World Cup 2026 prediction engine — command line.
     python run.py loadtest [dir|url]     load-test the static build (spike proof)
     python run.py ogcard                 (re)generate the original OG share card
     python run.py graph [--md|--data]    draw the backend connected graph (VS Code)
+    python run.py audit [--no-load]      security + stability + load + hygiene gate
 
 `refresh` is the inflow loop: pull the newest results/news, fold them into the
 ratings, and re-run the simulation so predictions always reflect latest data.
@@ -215,6 +216,11 @@ def cmd_graph(args):
     depgraph.main(args)
 
 
+def cmd_audit(args):
+    from tools import audit
+    raise SystemExit(audit.main(args))
+
+
 COMMANDS = {
     "health": cmd_health, "init": cmd_init, "ingest": cmd_ingest,
     "train": cmd_train, "predict": cmd_predict, "backtest": cmd_backtest,
@@ -222,7 +228,7 @@ COMMANDS = {
     "groups": cmd_groups, "news": cmd_news, "rankings": cmd_rankings,
     "refresh": cmd_refresh, "loop": cmd_loop, "viz": cmd_viz,
     "export": cmd_export, "loadtest": cmd_loadtest, "ogcard": cmd_ogcard,
-    "graph": cmd_graph,
+    "graph": cmd_graph, "audit": cmd_audit,
 }
 
 
