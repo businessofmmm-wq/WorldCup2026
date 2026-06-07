@@ -27,9 +27,21 @@ import config
 from db import connect
 from models.predict import Predictor
 from models import field_2026
+from models import qmc
 
 
 GROUP_LETTERS = [chr(ord("A") + i) for i in range(12)]
+
+# The six round-robin pairings of a four-team group, in a fixed order so each
+# can be given a stable QMC dimension.
+PAIRS = [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3)]
+
+# Knockout ties in *descending leverage* — the final decides the champion, so it
+# gets the lowest (best-distributed) QMC dimension, then the semis, quarters and
+# round-of-16. The round-of-32 and the 72 group matches follow. Concentrating QMC
+# on the low-leverage... er, *high*-leverage low dimensions is what makes it pay
+# off on a problem whose nominal dimension (~103) is far above QMC's sweet spot.
+_KO_BY_LEVERAGE = [104, 101, 102, 97, 98, 99, 100, 96, 95, 94, 93, 92, 91, 90, 89]
 
 
 def make_pots(field: list[str], elo: dict) -> list[list[str]]:
@@ -80,8 +92,23 @@ class Tournament:
         self.rng = random.Random(seed)
         # cache scoreline grids per ordered pair (neutral) — big speed win
         self._grid_cache: dict[tuple, tuple] = {}
+        # Stable QMC dimension for every match decision (knockouts first, on the
+        # best-distributed low dimensions; group matches last).
+        self._dim: dict = {}
+        d = 0
+        for m in _KO_BY_LEVERAGE:
+            self._dim[("ko", m)] = d; d += 1
+        for idx in range(len(field_2026.R32)):
+            self._dim[("r32", idx)] = d; d += 1
+        for g in GROUP_LETTERS:
+            for pi in range(len(PAIRS)):
+                self._dim[("grp", g, pi)] = d; d += 1
+        self.n_dims = d
+        # The uniform source for the *current* simulation. Default = crude MC, so
+        # an unconfigured Tournament behaves exactly like before (the live path).
+        self.src: qmc.UniformSource = qmc.PRNGSource(self.rng)
 
-    def _sample_score(self, home: str, away: str) -> tuple[int, int]:
+    def _sample_score(self, home: str, away: str, dim: int) -> tuple[int, int]:
         key = (home, away)
         cached = self._grid_cache.get(key)
         if cached is None:
@@ -92,7 +119,7 @@ class Tournament:
                     flat.append(((i, j), p))
             cached = flat
             self._grid_cache[key] = flat
-        r = self.rng.random()
+        r = self.src.u(dim)                 # QMC dimension (or PRNG for crude MC)
         cum = 0.0
         for score, p in cached:
             cum += p
@@ -100,9 +127,9 @@ class Tournament:
                 return score
         return cached[-1][0]
 
-    def _knockout(self, a: str, b: str) -> str:
+    def _knockout(self, a: str, b: str, dim: int) -> str:
         """Single match; on a sampled draw, settle by relative win odds."""
-        ha, hb = self._sample_score(a, b)
+        ha, hb = self._sample_score(a, b, dim)
         if ha > hb:
             return a
         if hb > ha:
@@ -110,32 +137,34 @@ class Tournament:
         pr = self.pred.predict(a, b, neutral=True)
         denom = pr["p_home"] + pr["p_away"]
         pa = pr["p_home"] / denom if denom > 0 else 0.5
-        return a if self.rng.random() < pa else b
+        return a if self.src.rand() < pa else b      # shoot-out coin (incidental)
 
     def simulate_once(self, groups: dict[str, list[str]]) -> dict:
         """Play one whole tournament; return reached-stage per team."""
         stage = {t: "group" for g in groups.values() for t in g}
         group_tables = {}
+        group_pts: dict[str, int] = {}    # team -> group-stage points (control variate)
         thirds = []                       # (group, team, pts, gd, gf)
         win_by_g, run_by_g = {}, {}
 
         for g, teams in groups.items():
             stats = {t: {"pts": 0, "gd": 0, "gf": 0} for t in teams}
-            for i in range(len(teams)):
-                for j in range(i + 1, len(teams)):
-                    h, a = teams[i], teams[j]
-                    hs, as_ = self._sample_score(h, a)
-                    self._apply(stats, h, a, hs, as_)
+            for pi, (i, j) in enumerate(PAIRS):
+                h, a = teams[i], teams[j]
+                hs, as_ = self._sample_score(h, a, self._dim[("grp", g, pi)])
+                self._apply(stats, h, a, hs, as_)
             ranked = sorted(teams, key=lambda t: (stats[t]["pts"], stats[t]["gd"],
-                                                  stats[t]["gf"], self.rng.random()),
+                                                  stats[t]["gf"], self.src.rand()),
                             reverse=True)
             group_tables[g] = ranked
+            for t in teams:
+                group_pts[t] = stats[t]["pts"]
             win_by_g[g] = ranked[0]
             run_by_g[g] = ranked[1]
             t3 = ranked[2]
             thirds.append((g, t3, stats[t3]["pts"], stats[t3]["gd"], stats[t3]["gf"]))
 
-        best = sorted(thirds, key=lambda x: (x[2], x[3], x[4], self.rng.random()),
+        best = sorted(thirds, key=lambda x: (x[2], x[3], x[4], self.src.rand()),
                       reverse=True)[:8]
         third_groups = {g: t for g, t, *_ in best}     # group letter -> team
 
@@ -144,7 +173,8 @@ class Tournament:
             stage[t] = "r32"
 
         champion = self._play_bracket(win_by_g, run_by_g, third_groups, stage)
-        return {"stage": stage, "champion": champion, "groups": group_tables}
+        return {"stage": stage, "champion": champion, "groups": group_tables,
+                "points": group_pts}
 
     def _assign_thirds(self, third_groups: dict) -> dict:
         """Map the eight 'T##' slots to third-placed teams, respecting Annex C.
@@ -164,7 +194,7 @@ class Tournament:
                 1 for g in avail if g in allowed[s] and g not in used))
             s = remaining[0]
             cands = [g for g in avail if g in allowed[s] and g not in used]
-            self.rng.shuffle(cands)
+            self.src.shuffle(cands)
             for g in cands:
                 assign[s] = g
                 if backtrack(remaining[1:], used | {g}):
@@ -188,13 +218,13 @@ class Tournament:
         slot.update(self._assign_thirds(third_groups))
 
         results = {}
-        for m, s1, s2 in field_2026.R32:
-            w = self._knockout(slot[s1], slot[s2])
+        for idx, (m, s1, s2) in enumerate(field_2026.R32):
+            w = self._knockout(slot[s1], slot[s2], self._dim[("r32", idx)])
             results[m] = w
             stage[w] = "r16"
         for m in (89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 104):
             s1, s2 = field_2026.BRACKET[m]
-            w = self._knockout(results[s1], results[s2])
+            w = self._knockout(results[s1], results[s2], self._dim[("ko", m)])
             results[m] = w
             stage[w] = field_2026.WINNER_STAGE[m]
         return results[104]
@@ -211,7 +241,16 @@ class Tournament:
             stats[h]["pts"] += 1; stats[a]["pts"] += 1
 
     def run(self, runs: int | None = None, groups: dict | None = None,
-            persist: bool = True, verbose: bool = True) -> dict:
+            persist: bool = True, verbose: bool = True,
+            method: str = "mc", qmc_seed: int | None = None,
+            qmc_dims: int = 15) -> dict:
+        """method: 'mc' (crude Monte Carlo, the default / live path),
+        'qmc' (randomised scrambled-Halton) or 'antithetic' (mirrored pairs).
+
+        qmc_dims caps how many (highest-leverage) dimensions QMC drives — the
+        final→R16 knockouts sit on the lowest, best-distributed Halton bases;
+        higher dimensions fall back to PRNG, where scrambled Halton would only
+        add noise (see models/qmc.py self-test)."""
         runs = runs or config.SIM_RUNS
         if groups is None:
             # Use the official 2026 final draw as a fixed bracket. (Fall back to
@@ -227,8 +266,23 @@ class Tournament:
         reached = defaultdict(lambda: defaultdict(int))
         champ = defaultdict(int)
 
-        for _ in range(runs):
-            # re-draw groups each run only if not a fixed draw
+        halton = (qmc.ScrambledHalton(min(self.n_dims, qmc_dims), seed=qmc_seed)
+                  if method == "qmc" else None)
+        anti_vec = None
+
+        for i in range(runs):
+            # Pick the uniform source for this simulation. 'mc' reproduces the
+            # original crude-MC behaviour; 'qmc'/'antithetic' reduce variance.
+            if method == "qmc":
+                self.src = qmc.QMCSource(halton.point(i), self.rng)
+            elif method == "antithetic":
+                if i % 2 == 0:
+                    anti_vec = [self.rng.random() for _ in range(self.n_dims)]
+                    self.src = qmc.QMCSource(anti_vec, self.rng)
+                else:
+                    self.src = qmc.QMCSource([1.0 - x for x in anti_vec], self.rng)
+            else:
+                self.src = qmc.PRNGSource(self.rng)
             res = self.simulate_once(groups)
             champ[res["champion"]] += 1
             for t, st in res["stage"].items():
