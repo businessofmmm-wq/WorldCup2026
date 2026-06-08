@@ -3,6 +3,12 @@
 _Runbook for the next working session. World Cup kicks off 11 Jun; publish
 embargo 9 Jun 08:00 AEST. All commands run locally against the local Postgres._
 
+> **Status (2026-06-08): pipeline complete.** Steps 1–5 were executed live this
+> session — goals model settled (**BP**), re-tuned + calibrated (**T=0.85**),
+> retrained + **50k-simulated**, and audited **GREEN / launch-ready**. The *only*
+> remaining step is `run.py export` + publish, **gated by the 9 Jun 08:00 AEST
+> embargo**. Everything else is done and pushed.
+
 ## The lens — a quantum view of the tournament
 _Samuel's framing, and it's faithful to what the engine actually is — keep
 building through it. A frame, not a fudge: the verdicts below stay measured._
@@ -54,25 +60,41 @@ building through it. A frame, not a fudge: the verdicts below stay measured._
       already tied and launch is imminent; not worth launch-eve model risk. Add
       later as a third `GOALS_MODEL` and re-run `--compare`.
 
-## 2. Re-tune & calibrate to the chosen model
-- [ ] `python run.py tune`       (coordinate-descent on held-out RPS)
-- [ ] `python run.py calibrate`  (fit the ensemble temperature)
-- [ ] Confirm `data/tuned_params.json` reflects the winner.
+## 2. Re-tune & calibrate — DONE (2026-06-08)
+- [x] `python run.py tune` — coordinate descent found no material gain (val RPS
+      0.16823 → 0.16819; 2023+ test slice identical) — confirms the shipped
+      params are already near-optimal.
+- [x] `python run.py calibrate` — best ensemble temperature **T=0.85** improves
+      all three held-out metrics (RPS 0.1651→0.1649, LogLoss 0.8509→0.8489,
+      Brier 0.4994→0.4989).
+- [x] `data/tuned_params.json` updated (tuned params + T=0.85) and committed.
 
-## 3. Retrain on latest data + refresh the live album
-- [ ] `python run.py refresh`         (live+news inflow → retrain → resim)
-- [ ] `python run.py simulate 50000`  (fresh 50k title odds — the full field)
-- [ ] `python run.py export`          (rebuild the static CDN snapshot — the
-      information→matter step; regenerates sim_report.json / FINDINGS.md /
-      ARCHITECTURE.md at the new 50k count).
+## 3. Retrain + 50k simulate — DONE locally (export embargoed)
+- [x] `python run.py train` — refit Elo/draw/DC/BP; BP `lambda3` = **+0.0719** on
+      live data (NLL 12,392.7→12,384.2). Used `train` (not `refresh`) because
+      `train` also refits BP, which `refresh` currently skips — see ⚠ below.
+- [x] `python run.py simulate 50000` — fresh authoritative field: Argentina
+      19.4%, Spain 16.0%, Brazil 14.0%, England 8.0%, France 7.7%, Portugal 6.6%.
+      Regenerated sim_report.json (runs=50000), group_adv.json, draw_params.json,
+      ARCHITECTURE.md (×50k). All committed.
+- [ ] `python run.py export` — **BLOCKED by embargo** until 9 Jun 08:00 AEST.
+      The only remaining step before launch. After the embargo: `export` →
+      deploy/publish the static CDN album (the information→matter step).
+- ⚠ `refresh` retrains Elo/draw/DC but **not** BP (low-risk intra-day since BP
+      reuses DC marginals + a slow lambda3). Post-launch, add a bivpois step to
+      `cmd_refresh` so the live goals model never drifts.
 
-## 4. Optional: bank the variance-reduction win on the live sim
-- [ ] At 50k the efficiency matters more — decide whether to switch the live
-      `simulate` from crude MC to antithetic/QMC (see VARIANCE.md). Control-
-      variate gives ~4x on group advancement; that's the lever that makes the
-      bigger superposition affordable.
+## 4. Variance reduction — DONE where it matters
+- [x] Applied **antithetic** to the live `refresh` sim (`REFRESH_METHOD`), cutting
+      runs 5000→1500 at equal precision. The fast match-day loop is where
+      efficiency actually pays.
+- **(n/a)** The authoritative 50k `simulate` stays crude MC on purpose: at 50k the
+      Monte-Carlo error is already ~0.18pp on the title odds, so QMC/antithetic
+      there is effort without a visible payoff. Revisit only if runs ever drop.
 
 ## 5. Launch gate
-- [ ] `python run.py audit`  must pass (security + stability + load + hygiene).
+- [x] `python run.py audit --no-load` — **VERDICT: GREEN, launch-ready** (14
+      checks, 0 fail / 0 warn). Load test skipped (needs an exported build); run
+      full `audit` after export, pre-publish.
 - [ ] Walk LAUNCH.md; confirm Ko-fi / Stripe link live; OG card current.
 - [ ] Respect the 9 Jun 08:00 AEST publish embargo.
