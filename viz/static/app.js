@@ -84,7 +84,7 @@ function renderMeta(m) {
   const stamps = [
     ['gold', m.n_teams || 48, 'TEAMS'],
     ['navy', m.n_matches_tournament || 104, 'MATCHES'],
-    ['teal', (m.last_sim?.runs ? Number(m.last_sim.runs).toLocaleString() : '20,000'), 'SIMS'],
+    ['teal', (m.last_sim?.runs ? Number(m.last_sim.runs).toLocaleString() : '50,000'), 'SIMS'],
     ['', acc.rps ?? '0.167', 'HELD-OUT RPS'],
   ];
   $('#coverStamps').innerHTML = stamps.map(([k, big, lbl]) =>

@@ -63,7 +63,7 @@ has essentially no attack surface. Earliest publish: **9 June 2026, 08:00 AEST**
 ## 🔁 Keeping it "live" during the tournament
 
 The site is a snapshot, so refresh it on a schedule. `deploy.bat` does the whole
-pipeline: **ingest live results → retrain → simulate 20k → export → deploy.**
+pipeline: **ingest live results → retrain → simulate 50k → export → deploy.**
 
 - **Windows Task Scheduler** → new task → run `deploy.bat` every **30–60 min** during
   match days (your PC must be on; the DB lives here). Matches are only a few times a

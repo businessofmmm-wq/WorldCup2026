@@ -45,7 +45,7 @@ python run.py calibrate       # fit the ensemble temperature
 python run.py rankings 25     # current world order
 python run.py predict Brazil Argentina
 python run.py groups          # official 2026 final draw + seeds
-python run.py simulate 20000  # title odds (official bracket)
+python run.py simulate 50000  # title odds (official bracket)
 python run.py refresh         # one inflow cycle: live+news -> retrain -> resim
 python run.py loop 1800       # keep predictions live, every 30 min
 ```

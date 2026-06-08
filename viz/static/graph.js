@@ -200,7 +200,7 @@
       stat(fmt(c.rated_teams), 'rated teams') +
       stat(fmt(c.news), 'news') +
       stat(a.rps ?? '—', 'held-out RPS') +
-      stat(sim.runs ? fmt(sim.runs) : '20k', 'sim runs') +
+      stat(sim.runs ? fmt(sim.runs) : '50k', 'sim runs') +
       `<div class="stat"><b>${m.static ? 'CDN' : 'LIVE'}</b>${m.static ? 'snapshot' : 'engine'}</div>`;
     if (nodes.__pg && c.matches) { nodes.__pg.desc = `${fmt(c.matches)} rows · live`; nodes.__pg.metaDom.textContent = nodes.__pg.desc; }
   }).catch(() => { $('#glive').innerHTML = '<div class="stat"><b>offline</b>start the engine for live data</div>'; });

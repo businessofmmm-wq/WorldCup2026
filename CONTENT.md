@@ -16,8 +16,8 @@ leakage-free — held-out **RPS 0.1667**, ~26% better than the base rate (see BA
 During the tournament it runs as a **live loop** (every 30–60 min on match days):
 1. **Ingest** newest results + team news — `run.py ingest live` / `news`.
 2. **Retrain** Elo + draw model + Dixon-Coles — `run.py train`.
-3. **Re-simulate** 20,000 Monte-Carlo tournaments over the official R32→Final bracket —
-   `run.py simulate 20000`.
+3. **Re-simulate** 50,000 Monte-Carlo tournaments over the official R32→Final bracket —
+   `run.py simulate 50000`.
 4. **Re-export + redeploy** the static site to the CDN — `deploy.bat`
    (the build-cache skips the 4,500-prediction rebuild when nothing changed).
 

@@ -137,8 +137,12 @@ ENSEMBLE_DC_WEIGHT = 0.55
 # T<1 sharpens, T>1 softens; 1.0 = no-op. Fit by `run.py calibrate`.
 ENSEMBLE_TEMPERATURE = 1.0
 
-# Monte Carlo.
-SIM_RUNS = 20000
+# Monte Carlo — the tournament held as a superposition of every possible future,
+# sampled run-by-run; each run is one collapsed "world". More runs resolve the
+# possibility space more finely (lean on models/variance.py — QMC/antithetic/
+# control-variate — to keep 50k cheap). This is the information->matter step:
+# raw probabilities become the tangible album once exported.
+SIM_RUNS = 50000
 
 # --------------------------------------------------------------------------- #
 # Paths

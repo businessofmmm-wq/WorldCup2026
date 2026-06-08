@@ -327,7 +327,7 @@ def _mermaid_dataflow(model: dict) -> str:
         '  PG[("PostgreSQL<br/>worldcup")]:::store',
         '  TRAIN["models: elo · poisson<br/>draw_model"]:::proc',
         '  PRED["models.predict<br/>ensemble 1X2 + xG"]:::proc',
-        '  SIM["models.tournament<br/>Monte Carlo ×20k"]:::proc',
+        '  SIM["models.tournament<br/>Monte Carlo ×50k"]:::proc',
         '  API["viz.server<br/>JSON API"]:::out',
         '  EXP["viz.export<br/>static snapshot"]:::out',
         '  WEB["wcpa26.com<br/>album dashboard"]:::ext',
