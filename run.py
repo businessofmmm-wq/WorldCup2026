@@ -8,6 +8,7 @@ World Cup 2026 prediction engine — command line.
     python run.py train                  recompute Elo + Dixon-Coles ratings
     python run.py predict HOME AWAY      single-fixture prediction (neutral)
     python run.py backtest [year]        leakage-free accuracy backtest (RPS/etc)
+    python run.py backtest [year] --compare   bivariate-Poisson vs Dixon-Coles
     python run.py tune                   grid-tune params on held-out RPS
     python run.py calibrate              fit the ensemble temperature (held-out)
     python run.py simulate [runs]        Monte Carlo the whole tournament
@@ -80,9 +81,14 @@ def cmd_ingest(args):
 
 def cmd_train(_args):
     from models import draw_model
+    from models import bivpoisson as bivpois
     print("[elo]"); elo_mod.compute()
     print("[draw-model]"); draw_model.fit()
-    print("[dixon-coles]"); poisson_mod.fit()
+    print("[dixon-coles]"); dc = poisson_mod.fit()
+    # Bivariate Poisson reuses the just-fit DC marginals and adds the shared
+    # covariance lambda3, so the attack/defence MLE is not paid for twice. Always
+    # fit it (cheap) to keep it warm — selecting it live is then just a flag flip.
+    print("[bivariate-poisson]"); bivpois.fit(base=dc)
     print("training complete")
 
 
@@ -111,7 +117,10 @@ def cmd_backtest(args):
         k = args.index("--refit")
         if k + 1 < len(args) and args[k + 1].isdigit():
             refit = int(args[k + 1])
-    bt.report(test_start=dt.date(year, 1, 1), refit_days=refit)
+    if "--compare" in args:   # bivariate-Poisson vs Dixon-Coles head-to-head
+        bt.compare(test_start=dt.date(year, 1, 1), refit_days=refit)
+    else:
+        bt.report(test_start=dt.date(year, 1, 1), refit_days=refit)
 
 
 def cmd_tune(_args):

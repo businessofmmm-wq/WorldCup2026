@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 data/dc_params.json
+data/bivpois_params.json
 .env
 
 # build + deploy artifacts

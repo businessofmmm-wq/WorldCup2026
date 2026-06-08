@@ -113,7 +113,23 @@ DC_ITERS = 400              # gradient-ascent iterations for the MLE fit
 DC_LR = 0.40                # learning rate (step = avg residual * lr)
 DC_REG = 0.08               # L2 shrinkage on attack/defence (curbs minnow overfit)
 
-# Ensemble weighting between the Elo 1X2 and the Dixon-Coles 1X2.
+# Goals model selecting the JOINT scoreline law (the marginals — time-decayed
+# attack/defence — are shared either way):
+#   "bivpois"     -> bivariate Poisson with a fitted shared covariance lambda3,
+#                    a proper joint distribution (models/bivpoisson.py).
+#   "dixon_coles" -> independent Poisson + the four-cell tau low-score patch.
+# Held-out verdict (`run.py backtest 2022 --compare`): a statistical tie — DC is
+# a hair better in the production ensemble (RPS 0.1685 vs 0.1688) because BP's
+# lambda3>=0 can't represent the slight NEGATIVE goal dependence DC's tau does
+# (lambda3 fits to ~0 on pre-test data). DC stays the launch default; flip this
+# to "bivpois" to ship the bivariate model — it is fully wired and kept warm.
+GOALS_MODEL = "dixon_coles"
+
+# Bivariate-Poisson shared covariance (models/bivpoisson.py).
+BP_MAX_LAMBDA3 = 0.5        # upper bracket for the 1-D MLE of the shared term l3
+BP_LAMBDA3_FALLBACK = 0.0   # l3 used by load() when no fitted params file exists
+
+# Ensemble weighting between the Elo 1X2 and the goals-model (DC/BP) 1X2.
 ENSEMBLE_ELO_WEIGHT = 0.45
 ENSEMBLE_DC_WEIGHT = 0.55
 # Final temperature applied to the blended 1X2 (p_i ** (1/T), renormalised).

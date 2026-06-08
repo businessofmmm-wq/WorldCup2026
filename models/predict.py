@@ -16,7 +16,17 @@ import config
 from db import connect
 from models import elo as elo_mod
 from models import poisson as poisson_mod
+from models import bivpoisson as bivpois_mod
 from models import draw_model
+
+
+def load_goals_model():
+    """Load the goals model selected by config.GOALS_MODEL (bivariate Poisson or
+    Dixon-Coles). Both expose the same GoalsModel interface, so the rest of the
+    engine is oblivious to which joint scoreline law is in play."""
+    if config.GOALS_MODEL == "bivpois":
+        return bivpois_mod.load()
+    return poisson_mod.load()
 
 # Empirical maximum draw probability for an evenly matched international.
 _DRAW_MAX = config.ELO_DRAW_MAX
@@ -44,29 +54,29 @@ def elo_1x2(elo: dict, home: str, away: str, neutral: bool = True) -> dict:
 class Predictor:
     def __init__(self, elo: dict | None = None, goals: poisson_mod.GoalsModel | None = None):
         self.elo = elo if elo is not None else _load_elo()
-        self.goals = goals if goals is not None else poisson_mod.load()
+        self.goals = goals if goals is not None else load_goals_model()
 
     def predict(self, home: str, away: str, neutral: bool = True,
                 log: bool = False, match_date=None) -> dict:
         e = elo_1x2(self.elo, home, away, neutral)
-        dc = self.goals.predict(home, away, neutral)
+        gm = self.goals.predict(home, away, neutral)   # bivariate-Poisson or DC
 
         we, wd = config.ENSEMBLE_ELO_WEIGHT, config.ENSEMBLE_DC_WEIGHT
         wsum = we + wd
-        p_home = (we * e["p_home"] + wd * dc["p_home"]) / wsum
-        p_draw = (we * e["p_draw"] + wd * dc["p_draw"]) / wsum
-        p_away = (we * e["p_away"] + wd * dc["p_away"]) / wsum
+        p_home = (we * e["p_home"] + wd * gm["p_home"]) / wsum
+        p_draw = (we * e["p_draw"] + wd * gm["p_draw"]) / wsum
+        p_away = (we * e["p_away"] + wd * gm["p_away"]) / wsum
         p_home, p_draw, p_away = _temper(p_home, p_draw, p_away)
 
         result = {
             "home": home, "away": away, "neutral": neutral,
             "p_home": p_home, "p_draw": p_draw, "p_away": p_away,
-            "exp_home_goals": dc["exp_home_goals"],
-            "exp_away_goals": dc["exp_away_goals"],
-            "top_scoreline": dc["top_scoreline"],
+            "exp_home_goals": gm["exp_home_goals"],
+            "exp_away_goals": gm["exp_away_goals"],
+            "top_scoreline": gm["top_scoreline"],
             "elo_home": self.elo.get(home, config.ELO_START),
             "elo_away": self.elo.get(away, config.ELO_START),
-            "components": {"elo": e, "dixon_coles": dc},
+            "components": {"elo": e, "goals": gm, "goals_model": config.GOALS_MODEL},
         }
         if log:
             self._log(result, match_date)
