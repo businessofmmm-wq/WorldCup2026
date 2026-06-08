@@ -648,9 +648,82 @@ function initReveal() {
 }
 
 // =========================================================================
+//  DAILY TEAM THEME  —  the album wears a different nation's colours each day.
+//  Highlights cascade because --gold / --terra / --red etc. are defined as
+//  var(--accent) / var(--accent-2) in the CSS, so setting those two custom
+//  properties re-themes the whole page. Today is pinned to Brazil × Morocco;
+//  every other day is picked deterministically from the date (same palette for
+//  everyone that day, and it rotates).
+// =========================================================================
+const TEAM_COLORS = {
+  Brazil: ['#009C3B', '#FFDF00'], Argentina: ['#6CACE4', '#ffffff'], Spain: ['#C60B1E', '#FFC400'],
+  France: ['#1E4DB7', '#EF4135'], England: ['#CE1124', '#ffffff'], Portugal: ['#C8102E', '#0B6E4F'],
+  Germany: ['#E1140A', '#FFCE00'], Netherlands: ['#FF6A13', '#21468B'], Belgium: ['#C8102E', '#FDDA24'],
+  Italy: ['#1B62C7', '#ffffff'], Croatia: ['#D7142B', '#2B4B9B'], Morocco: ['#C1272D', '#0B6E4F'],
+  Mexico: ['#0B7A4B', '#CE1126'], 'United States': ['#1B3A8C', '#B31942'], Canada: ['#D52B1E', '#ffffff'],
+  Uruguay: ['#4F9BD9', '#0A1A6B'], Colombia: ['#FCD116', '#C8102E'], Japan: ['#C8102E', '#ffffff'],
+  'South Korea': ['#CD2E3A', '#0047A0'], Senegal: ['#0B8A43', '#E31B23'], Switzerland: ['#D52B1E', '#ffffff'],
+  Denmark: ['#C60C30', '#ffffff'], Ecuador: ['#FFD100', '#0072CE'], Poland: ['#DC143C', '#ffffff'],
+  Serbia: ['#C6363C', '#15467A'], Ghana: ['#0B7A3B', '#FCD116'], Nigeria: ['#0B8A4B', '#ffffff'],
+  Cameroon: ['#0B7A5E', '#CE1126'], Australia: ['#0B8A3D', '#FFCD00'], 'Saudi Arabia': ['#0B7A3D', '#ffffff'],
+  Iran: ['#239F40', '#DA0000'], Qatar: ['#8A1538', '#ffffff'], Egypt: ['#C8102E', '#ffffff'],
+  Algeria: ['#0B7A3D', '#ffffff'], Tunisia: ['#E70013', '#ffffff'], Norway: ['#BA0C2F', '#1B3A8C'],
+  Sweden: ['#1B62C7', '#FECC00'], Austria: ['#ED2939', '#ffffff'], Turkey: ['#E30A17', '#ffffff'],
+  Ukraine: ['#FFD500', '#0057B7'], Wales: ['#C8102E', '#0B8A3D'], Scotland: ['#1666C2', '#ffffff'],
+  Peru: ['#D91023', '#ffffff'], Chile: ['#1B49B5', '#DA291C'], Paraguay: ['#DA121A', '#0B43A8'],
+  'Costa Rica': ['#1B49B5', '#CE1126'], Panama: ['#DA121A', '#0B5293'], Honduras: ['#1B83CF', '#ffffff'],
+  Jamaica: ['#0B9B3A', '#FED100'], 'Ivory Coast': ['#FF8200', '#0B9A44'], Mali: ['#FCD116', '#16B53A'],
+  'Cape Verde': ['#1B49B5', '#CF2027'], 'South Africa': ['#0B7A4D', '#FFB915'], 'DR Congo': ['#1B7FFF', '#F7D618'],
+};
+const THEME_FALLBACK = ['#d8b54a', '#2e9e7e'];
+const THEME_PINS = { '2026-06-08': ['Brazil', 'Morocco'] };
+
+function _todayKey(d) {
+  d = d || new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function pickDailyTeams(key) {
+  key = key || _todayKey();
+  if (THEME_PINS[key]) return THEME_PINS[key].slice(0, 2);
+  const teams = Object.keys(TEAM_COLORS);
+  let h = 2166136261;                                   // FNV-1a over the date → stable per day
+  for (let i = 0; i < key.length; i++) { h ^= key.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+  const a = h % teams.length;
+  let b = (Math.imul(h ^ 0x9e3779b9, 2654435761) >>> 0) % teams.length;
+  if (b === a) b = (b + 1) % teams.length;
+  return [teams[a], teams[b]];
+}
+function applyDailyTheme() {
+  const pair = pickDailyTeams();
+  const ca = TEAM_COLORS[pair[0]] || THEME_FALLBACK;
+  const cb = TEAM_COLORS[pair[1]] || THEME_FALLBACK;
+  const root = document.documentElement;
+  root.style.setProperty('--accent', ca[0]);
+  root.style.setProperty('--accent-2', cb[0]);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', '#141310');
+  try {                                                 // a small credit on the cover (decorative — never blocks boot)
+    const host = document.querySelector('.cover-inner');
+    if (host && !document.querySelector('.theme-credit')) {
+      const el = document.createElement('div');
+      el.className = 'theme-credit';
+      el.innerHTML =
+        '<span class="tc-x">TODAY’S COLOURS</span>' +
+        '<span class="tc-team"><i style="background:' + ca[0] + '"></i>' + pair[0] + '</span>' +
+        '<span class="tc-x">×</span>' +
+        '<span class="tc-team"><i style="background:' + cb[0] + '"></i>' + pair[1] + '</span>';
+      const stamps = document.getElementById('coverStamps');
+      host.insertBefore(el, stamps ? stamps.nextSibling : null);
+    }
+  } catch (e) { /* credit is decorative */ }
+  return pair;
+}
+
+// =========================================================================
 //  BOOT
 // =========================================================================
 async function boot() {
+  applyDailyTheme();
   scrollspy();
   initScrollProgress();
   skeletonFill();
