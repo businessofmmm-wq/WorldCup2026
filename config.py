@@ -118,12 +118,13 @@ DC_REG = 0.08               # L2 shrinkage on attack/defence (curbs minnow overf
 #   "bivpois"     -> bivariate Poisson with a fitted shared covariance lambda3,
 #                    a proper joint distribution (models/bivpoisson.py).
 #   "dixon_coles" -> independent Poisson + the four-cell tau low-score patch.
-# Held-out verdict (`run.py backtest 2022 --compare`): a statistical tie — DC is
-# a hair better in the production ensemble (RPS 0.1685 vs 0.1688) because BP's
+# Held-out verdict (`run.py backtest 2022 --compare`): a near-tie — DC a hair
+# better in the production ensemble (RPS 0.1685 vs 0.1688) because BP's
 # lambda3>=0 can't represent the slight NEGATIVE goal dependence DC's tau does
-# (lambda3 fits to ~0 on pre-test data). DC stays the launch default; flip this
-# to "bivpois" to ship the bivariate model — it is fully wired and kept warm.
-GOALS_MODEL = "dixon_coles"
+# (lambda3 fits to ~0 on pre-test data). Shipping the proper bivariate model by
+# choice; to be settled definitively next session (full 2018 backtest +
+# diagonal-inflated BP). Flip back to "dixon_coles" to revert — both stay wired.
+GOALS_MODEL = "bivpois"
 
 # Bivariate-Poisson shared covariance (models/bivpoisson.py).
 BP_MAX_LAMBDA3 = 0.5        # upper bracket for the 1-D MLE of the shared term l3
