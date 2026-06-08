@@ -118,12 +118,16 @@ DC_REG = 0.08               # L2 shrinkage on attack/defence (curbs minnow overf
 #   "bivpois"     -> bivariate Poisson with a fitted shared covariance lambda3,
 #                    a proper joint distribution (models/bivpoisson.py).
 #   "dixon_coles" -> independent Poisson + the four-cell tau low-score patch.
-# Held-out verdict (`run.py backtest 2022 --compare`): a near-tie — DC a hair
-# better in the production ensemble (RPS 0.1685 vs 0.1688) because BP's
-# lambda3>=0 can't represent the slight NEGATIVE goal dependence DC's tau does
-# (lambda3 fits to ~0 on pre-test data). Shipping the proper bivariate model by
-# choice; to be settled definitively next session (full 2018 backtest +
-# diagonal-inflated BP). Flip back to "dixon_coles" to revert — both stay wired.
+# Held-out verdict — SETTLED on the full window (`run.py backtest 2018 --compare`,
+# 8,009 held-out matches from 2018-01-01): bivariate-Poisson now WINS on the goals
+# model alone (RPS 0.1686 vs DC 0.1691; better LogLoss 0.8681 and Brier 0.5084
+# too), and lambda3 fits to a healthy +0.058 on the modern window — the coupling
+# is real here, not collapsed as it was pre-2022. In the full Elo+goals ensemble
+# the two are a dead heat (RPS 0.1668 BP vs 0.1667 DC — a 4th-decimal, noise-level
+# gap). So bivpois stays the default, now empirically justified rather than by
+# choice. Flip to "dixon_coles" to revert — both stay wired. (A diagonal-inflated
+# BP could sharpen draw mass further, but the ensemble is already tied and launch
+# is imminent — deferred to a post-launch experiment; see NEXTSTEPS.md.)
 GOALS_MODEL = "bivpois"
 
 # Bivariate-Poisson shared covariance (models/bivpoisson.py).

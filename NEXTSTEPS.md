@@ -38,18 +38,21 @@ building through it. A frame, not a fudge: the verdicts below stay measured._
   fast. The sim is rarely the refresh bottleneck; network ingest + the 49k-row
   Elo/DC refit dominate. Every data string stays in the loop — just expanded
   efficiently. Revert via `REFRESH_METHOD="mc"`, `REFRESH_RUNS=5000`.
-- Held-out verdict so far (2022 window): **tie** — DC a hair better in the
-  ensemble (RPS 0.1685 vs 0.1688). BP's `lambda3` collapses to ~0 on pre-test
-  data because it can't represent football's slight *negative* goal dependence.
+- Held-out verdict — **settled** (full 2018 window, 8,009 matches): BP **wins**
+  the goals model (RPS 0.1686 vs DC 0.1691; better LogLoss/Brier) and `lambda3`
+  fits to a healthy **+0.058** on modern data — real coupling, not collapsed. In
+  the full ensemble it's a dead heat (0.1668 vs 0.1667). `bivpois` locked.
 
-## 1. Settle the goals model (the open question)
-- [ ] Definitive backtest on the full window: `python run.py backtest 2018 --compare`
-      (more held-out matches → tighter RPS gap than the 2022 quick run).
-- [ ] Try the **diagonal-inflated bivariate Poisson** (Karlis-Ntzoufras 2003):
-      mix the BP with an inflation component on the draw diagonal. Unlike plain
-      BP this *can* lift draw mass to match data and may finally beat DC's tau.
-      Add as a third `GOALS_MODEL` option; re-run `--compare`.
-- [ ] Lock the default to whichever wins; note it in `config.py`.
+## 1. Settle the goals model — DONE (2026-06-08)
+- [x] Definitive backtest on the full window (`run.py backtest 2018 --compare`,
+      8,009 held-out matches): **BP wins** the goals model (RPS 0.1686 vs DC
+      0.1691), `lambda3` = +0.058 (real coupling on modern data), ensemble a dead
+      heat (0.1668 vs 0.1667). **`bivpois` locked** in `config.py`.
+- [ ] _(Optional, post-launch)_ **Diagonal-inflated bivariate Poisson**
+      (Karlis-Ntzoufras 2003): mix BP with a draw-diagonal inflation component to
+      lift draw mass and maybe edge the ensemble. **Deferred** — the ensemble is
+      already tied and launch is imminent; not worth launch-eve model risk. Add
+      later as a third `GOALS_MODEL` and re-run `--compare`.
 
 ## 2. Re-tune & calibrate to the chosen model
 - [ ] `python run.py tune`       (coordinate-descent on held-out RPS)
