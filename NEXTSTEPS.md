@@ -32,9 +32,12 @@ building through it. A frame, not a fudge: the verdicts below stay measured._
 - Goals model is **pluggable** (`config.GOALS_MODEL`): `bivpois` (live) |
   `dixon_coles`. Both share the time-decayed attack/defence MLE.
 - `SIM_RUNS = 50000`. The authoritative odds path (`simulate` / `deploy.bat`)
-  runs 50k. The live `refresh` inflow loop stays at 5k on purpose — it fires
-  every 30 min on match days and must stay fast; bump it only if a cycle's lag
-  is acceptable.
+  runs 50k. The live `refresh` inflow loop is now deliberately lean —
+  `REFRESH_RUNS = 1500` with `REFRESH_METHOD = "antithetic"` (mirrored-pair
+  variance reduction ≈ 3k crude on the live numbers) so match-day cycles stay
+  fast. The sim is rarely the refresh bottleneck; network ingest + the 49k-row
+  Elo/DC refit dominate. Every data string stays in the loop — just expanded
+  efficiently. Revert via `REFRESH_METHOD="mc"`, `REFRESH_RUNS=5000`.
 - Held-out verdict so far (2022 window): **tie** — DC a hair better in the
   ensemble (RPS 0.1685 vs 0.1688). BP's `lambda3` collapses to ~0 on pre-test
   data because it can't represent football's slight *negative* goal dependence.

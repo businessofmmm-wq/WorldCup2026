@@ -173,7 +173,9 @@ def cmd_refresh(_args):
         ("elo", lambda: elo_mod.compute(verbose=False)),
         ("draw-model", lambda: draw_model.fit(verbose=False)),
         ("dixon-coles", lambda: poisson_mod.fit(verbose=False)),
-        ("simulate", lambda: Tournament().run(runs=5000, verbose=True, persist=True)),
+        ("simulate", lambda: Tournament().run(
+            runs=config.REFRESH_RUNS, method=config.REFRESH_METHOD,
+            verbose=True, persist=True)),
     ]
 
     for name, fn in steps:

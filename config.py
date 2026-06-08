@@ -144,6 +144,18 @@ ENSEMBLE_TEMPERATURE = 1.0
 # raw probabilities become the tangible album once exported.
 SIM_RUNS = 50000
 
+# The live inflow loop (`run.py refresh`, every ~30 min on match days) re-sims on
+# a tight budget: it must stay fast, and the *authoritative* odds come from the
+# 50k `simulate` path, not from here. So run the fewest worlds that still hold the
+# live title bars steady between refreshes. Antithetic (mirrored-pair) sampling
+# roughly doubles precision-per-run, so 1,500 antithetic runs ~= 3k crude on the
+# title/advancement numbers the snapshot shows — a >3x cut from the old 5k crude.
+# The sim is rarely the refresh bottleneck anyway (network ingest + the 49k-row
+# Elo/DC refit dominate). Keeps every data string in the loop, just expands it
+# efficiently. Revert with REFRESH_METHOD = "mc", REFRESH_RUNS = 5000.
+REFRESH_RUNS = 1500
+REFRESH_METHOD = "antithetic"   # 'mc' | 'qmc' | 'antithetic' (models/tournament.py)
+
 # --------------------------------------------------------------------------- #
 # Paths
 # --------------------------------------------------------------------------- #
