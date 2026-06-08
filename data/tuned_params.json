@@ -1,5 +1,5 @@
 {
- "ELO_K_SCALE": 0.85,
+ "ELO_K_SCALE": 1.0,
  "ELO_HOME_ADVANTAGE": 110.0,
  "ELO_DRAW_MAX": 0.34,
  "ELO_USE_GD": true,
