@@ -7,6 +7,7 @@
   <meta name="description" content="WCPA — the World Cup Prediction Album — calls every match of the 2026 FIFA World Cup with a model backtested on 49,000+ internationals: title odds, the full wallchart and the likeliest score for every game, laid out like a retro sticker album. For entertainment, not betting advice." />
   <link rel="canonical" href="https://wcpa26.com/" />
   <meta name="theme-color" content="#1c1a17" />
+  <meta name="color-scheme" content="dark" />
   <meta name="author" content="Samuel Bowey" />
 
   <!-- Open Graph / Twitter — shareable cards (virality is the launch engine) -->
@@ -24,9 +25,11 @@
   <meta name="twitter:image" content="https://wcpa26.com/og-cover.png" />
 
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Staatliches&family=Space+Grotesk:wght@400;500;700&family=Bungee&display=swap" rel="stylesheet" />
+  <!-- Fonts are self-hosted same-origin (see @font-face in style.css). Preload the
+       two above-the-fold faces — Anton (cover/headline = the LCP text) and Space
+       Grotesk (body) — so they download in parallel with the CSS, no third-party hop. -->
+  <link rel="preload" href="/fonts/anton-latin.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="preload" href="/fonts/spacegrotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/style.css" />
 </head>
 <body>
@@ -46,16 +49,20 @@
       </span>
     </a>
     <nav class="album-index" id="albumIndex" aria-label="Album sections">
-      <a href="#odds">Odds</a>
-      <a href="#matches">Matches</a>
-      <a href="#wallchart">Wallchart</a>
-      <a href="#groups">Groups</a>
+      <a href="#whole">The&nbsp;Whole</a>
       <a href="#rankings">Rankings</a>
       <a href="#lab">Match&nbsp;Lab</a>
+      <a href="#tactics">Collapse</a>
+      <a href="#groups">Groups</a>
+      <a href="#path">Bracket</a>
+      <a href="#odds">Odds</a>
       <a href="#intel">Intel</a>
       <a href="#method">Method</a>
     </nav>
     <div class="topbar-actions">
+      <time class="world-clock" id="worldClock" aria-hidden="true">
+        <span class="wc-time">--:--:--</span><span class="wc-zone"></span>
+      </time>
       <button class="icon-btn" id="shareBtn" title="Share this album" aria-label="Share this album">⤴</button>
       <button class="live-pill" id="livePill" title="Reload the latest model output" aria-label="Reload the latest model output">
         <span class="dot"></span> LIVE
@@ -76,74 +83,55 @@
         <div class="cover-kickoff" id="coverKickoff"></div>
         <div class="cover-hosts" id="coverHosts"></div>
         <div class="cover-stamps" id="coverStamps"></div>
-        <div class="cover-fav" id="coverFav"></div>
       </div>
+
+      <!-- now live: Collapse — the quantum run (jumps to #tactics) -->
+      <button class="cover-promo live" id="coverPromo" type="button"
+              aria-label="Open Collapse — pick one nation and run it through every timeline of the 2026 World Cup">
+        <span class="cp-burst" aria-hidden="true"></span>
+        <span class="cp-flash">NEW</span>
+        <span class="cp-k">NOW LIVE</span>
+        <span class="cp-t">Collapse:<br>The Quantum Run</span>
+        <span class="cp-d">Pick one nation. Bend each match with quantum tactics. See how far your timeline survives.</span>
+        <span class="cp-cta">Start your run →</span>
+      </button>
+
       <div class="scroll-hint">▼ flip the page</div>
     </section>
 
-    <!-- ========================= TITLE ODDS ========================= -->
-    <section id="odds" class="page">
+    <!-- ===================== 01 · THE WHOLE (mural funnel) ===================== -->
+    <section id="whole" class="page whole">
       <div class="page-head">
         <span class="page-no">01</span>
-        <h2>Who Lifts It?</h2>
-        <p class="page-tag">Champion probability — <span id="oddsRuns">50,000</span> Monte-Carlo tournaments over the official bracket.</p>
+        <h2>The Whole</h2>
+        <p class="page-tag">The entire 2026 World Cup as one living mural — the 48 funnelling to one. Every number is the model's; tap any nation to open its profile.</p>
       </div>
-      <div class="podium" id="podium"></div>
-      <div class="odds-list" id="oddsList"></div>
-      <p class="page-foot">Bars show title odds; the small pips are the road to the final — <b>QF · SF · F · 🏆</b>. <span id="oddsFresh" class="fresh"></span></p>
+      <div class="mural" id="mural">
+        <div class="pulse" id="muralPulse" aria-label="Live pulse"></div>
+        <div class="mural-body">
+          <div class="mural-col mural-groups" id="muralGroups" aria-label="The groups, funnelling"></div>
+          <div class="mural-col mural-river" id="muralRiver" aria-label="Knockout river to the champion"></div>
+          <div class="mural-col mural-altar" id="muralAltar" aria-label="Champion and title odds"></div>
+        </div>
+        <div class="marginalia" id="muralIntel" aria-label="Latest intel"></div>
+        <p class="loading" id="muralLoading">assembling the whole tournament…</p>
+      </div>
     </section>
 
-    <!-- ======================== MATCH CENTRE ======================== -->
-    <section id="matches" class="page">
-      <div class="page-head">
-        <span class="page-no">02</span>
-        <h2>Match Centre</h2>
-        <p class="page-tag">Every World Cup fixture, called by the model — win/draw/win, expected goals and the likeliest score. Results show whether the model called it. <b id="mcRecord"></b></p>
-      </div>
-      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
-        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="true" aria-controls="mcList">Upcoming</button>
-        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
-      </div>
-      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
-    </section>
-
-    <!-- ========================= WALLCHART ========================= -->
-    <section id="wallchart" class="page">
-      <div class="page-head">
-        <span class="page-no">03</span>
-        <h2>The Wallchart</h2>
-        <p class="page-tag">Official FIFA Round-of-32 seeding. The <span class="gold-ink">gold path</span> is the model's chalk run — the higher win-probability side advances every tie. It's one bracket, so the title favourite needn't win it; the Odds page averages 50,000 of these.</p>
-      </div>
-      <div class="bracket-scroll">
-        <div class="bracket" id="bracket"></div>
-      </div>
-      <p class="page-foot" id="bracketNote"></p>
-    </section>
-
-    <!-- =========================== GROUPS =========================== -->
-    <section id="groups" class="page">
-      <div class="page-head">
-        <span class="page-no">04</span>
-        <h2>Group Pages</h2>
-        <p class="page-tag">All twelve groups. <b>Adv%</b> = chance of reaching the knockouts (top-2 or one of the 8 best 3rd-placed).</p>
-      </div>
-      <div class="groups-grid" id="groupsGrid"></div>
-    </section>
-
-    <!-- ========================= RANKINGS ========================= -->
+    <!-- ========================= 02 · RANKINGS ========================= -->
     <section id="rankings" class="page">
       <div class="page-head">
-        <span class="page-no">05</span>
+        <span class="page-no">02</span>
         <h2>Power Rankings</h2>
-        <p class="page-tag">Live international Elo (active sides). Tap a sticker to unfurl its rating trajectory.</p>
+        <p class="page-tag">Live international Elo (active sides). Tap a sticker to open the nation's profile and unfurl its rating trajectory.</p>
       </div>
       <div class="rank-board" id="rankBoard"></div>
     </section>
 
-    <!-- ========================= MATCH LAB ========================= -->
+    <!-- ========================= 03 · MATCH LAB ========================= -->
     <section id="lab" class="page">
       <div class="page-head">
-        <span class="page-no">06</span>
+        <span class="page-no">03</span>
         <h2>Match Lab</h2>
         <p class="page-tag">Pick any two of the 48. The ensemble returns win/draw/win, expected goals and the most-likely scoreline — a neutral-venue tale of the tape.</p>
       </div>
@@ -164,10 +152,64 @@
       </div>
     </section>
 
-    <!-- =========================== INTEL =========================== -->
-    <section id="intel" class="page">
+    <!-- ====================== 04 · COLLAPSE — THE QUANTUM RUN ====================== -->
+    <section id="tactics" class="page">
+      <div class="page-head">
+        <span class="page-no">04</span>
+        <h2>Collapse</h2>
+        <p class="page-tag">One nation, every timeline. Pick a side and run it through the 2026 tournament — before each match, set your <b>quantum state</b> (operators that tilt the model's scoreline distribution), then collapse the superposition to a single result. Win and advance; lose and the timeline ends. <span class="adlabel">original quantum lens · flags public-domain · no club marks</span></p>
+      </div>
+      <div id="collapseApp" class="collapse-app">
+        <noscript><p class="page-tag">The Collapse run needs JavaScript enabled.</p></noscript>
+        <p class="loading">spinning up the multiverse…</p>
+      </div>
+      <p class="page-foot">Operators are honest parameter transforms on the bivariate-Poisson goal rates — the quantum names describe exactly what they do to the odds (shown before→after). The <b>Daily Challenge</b> is one shared, frozen timeline ranked on the global board; <b>Free Play</b> re-rolls the field every run. λ (lambda) is the entanglement independent models miss.</p>
+    </section>
+
+    <!-- =========================== 05 · GROUPS =========================== -->
+    <section id="groups" class="page">
+      <div class="page-head">
+        <span class="page-no">05</span>
+        <h2>Group Pages</h2>
+        <p class="page-tag">All twelve groups. <b>Adv%</b> = chance of reaching the knockouts (top-2 or one of the 8 best 3rd-placed). Tap a nation for its profile.</p>
+      </div>
+      <div class="groups-grid" id="groupsGrid"></div>
+    </section>
+
+    <!-- ================= 06 · BRACKET + MATCHES (combined) ================= -->
+    <section id="path" class="page">
+      <div class="page-head">
+        <span class="page-no">06</span>
+        <h2>Bracket &amp; Matches</h2>
+        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
+      </div>
+      <div class="bracket-scroll">
+        <div class="bracket" id="bracket"></div>
+      </div>
+      <p class="page-foot" id="bracketNote"></p>
+      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
+        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="true" aria-controls="mcList">Upcoming</button>
+        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
+      </div>
+      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
+    </section>
+
+    <!-- ========================= 07 · TITLE ODDS ========================= -->
+    <section id="odds" class="page">
       <div class="page-head">
         <span class="page-no">07</span>
+        <h2>Who Lifts It?</h2>
+        <p class="page-tag">Champion probability — <span id="oddsRuns">50,000</span> Monte-Carlo tournaments over the official bracket.</p>
+      </div>
+      <div class="podium" id="podium"></div>
+      <div class="odds-list" id="oddsList"></div>
+      <p class="page-foot">Bars show title odds; the small pips are the road to the final — <b>QF · SF · F · 🏆</b>. <span id="oddsFresh" class="fresh"></span></p>
+    </section>
+
+    <!-- =========================== 08 · INTEL =========================== -->
+    <section id="intel" class="page">
+      <div class="page-head">
+        <span class="page-no">08</span>
         <h2>Team Intel</h2>
         <p class="page-tag">Live RSS clippings auto-tagged by nation and flagged: <b>injury · suspension · lineup · form · transfer · manager</b>.</p>
       </div>
@@ -177,24 +219,23 @@
       <div class="clippings" id="clippings"></div>
     </section>
 
-    <!-- =========================== METHOD =========================== -->
+    <!-- =========================== 09 · METHOD =========================== -->
     <section id="method" class="page">
       <div class="page-head">
-        <span class="page-no">08</span>
+        <span class="page-no">09</span>
         <h2>The Method</h2>
         <p class="page-tag">Not just plausible — measured. Leakage-free walk-forward over ~8,000 held-out internationals.</p>
       </div>
       <div class="method" id="method"></div>
     </section>
 
-    <!-- ===================== BACK COVER · shop + support ===================== -->
+    <!-- ===================== BACK COVER · support ===================== -->
     <section id="backcover" class="page backcover">
       <div class="page-head">
         <span class="page-no">★</span>
-        <h2>The Club Shop</h2>
-        <p class="page-tag">Kit out like it's 1990 — a few things from the blokecore / retro-football world. <span class="adlabel">#Ad · affiliate links</span></p>
+        <h2>The Back Cover</h2>
+        <p class="page-tag">That's the album — every match, called. Thanks for flipping through.</p>
       </div>
-      <div class="shop-shelf" id="shopShelf"></div>
       <div class="support">
         <div class="support-card sticker tape">
           <div class="sup-h">Enjoying the album?</div>
@@ -223,6 +264,18 @@
   </footer>
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-  <script src="/app.js"></script>
+
+  <!-- Shared national-team profile — one canonical detail view, opened from any
+       nation anywhere (mural, rankings, groups, intel, bracket). Keeps per-team
+       detail in ONE place instead of repeating it across pages. -->
+  <div class="profile-overlay" id="profileOverlay" hidden>
+    <div class="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileName" id="profileModal">
+      <button class="profile-close" id="profileClose" type="button" aria-label="Close profile">✕</button>
+      <div class="profile-body" id="profileBody"></div>
+    </div>
+  </div>
+
+  <script src="/app.js" defer></script>
+  <script type="module" src="/collapse.js"></script>
 </body>
 </html>

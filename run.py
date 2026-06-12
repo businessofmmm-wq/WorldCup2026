@@ -24,6 +24,7 @@ World Cup 2026 prediction engine — command line.
     python run.py graph [--md|--data]    draw the backend connected graph (VS Code)
     python run.py audit [--no-load]      security + stability + load + hygiene gate
     python run.py simvar [-n N -r R]     variance-reduction benchmark (QMC/antithetic/CV)
+    python run.py cv <clip> --home H --away A --date D   Quantum Tactics CV pass (local, CC clip)
 
 `refresh` is the inflow loop: pull the newest results/news, fold them into the
 ratings, and re-run the simulation so predictions always reflect latest data.
@@ -166,13 +167,17 @@ def cmd_rankings(args):
 def cmd_refresh(_args):
     print(f"[{dt.datetime.now():%H:%M:%S}] inflow refresh")
     from models import draw_model
+    from models import bivpoisson as bivpois
 
     steps = [
         ("live", lambda: src_live.ingest()),
         ("news", lambda: src_news.ingest(verbose=False)),
         ("elo", lambda: elo_mod.compute(verbose=False)),
         ("draw-model", lambda: draw_model.fit(verbose=False)),
-        ("dixon-coles", lambda: poisson_mod.fit(verbose=False)),
+        # BP rides the just-fit DC marginals, so the live goals model can't
+        # drift from the ratings between full `train` runs.
+        ("dixon-coles + bivpois",
+         lambda: bivpois.fit(base=poisson_mod.fit(verbose=False))),
         ("simulate", lambda: Tournament().run(
             runs=config.REFRESH_RUNS, method=config.REFRESH_METHOD,
             verbose=True, persist=True)),
@@ -238,6 +243,13 @@ def cmd_simvar(args):
     variance.main(args)
 
 
+def cmd_cv(args):
+    # Lazy import: tools.cv_tactics pulls in OpenCV/Ultralytics only when actually run,
+    # so the heavy CV stack never loads for any other command (or any serving path).
+    from tools import cv_tactics
+    raise SystemExit(cv_tactics.main(args))
+
+
 COMMANDS = {
     "health": cmd_health, "init": cmd_init, "ingest": cmd_ingest,
     "train": cmd_train, "predict": cmd_predict, "backtest": cmd_backtest,
@@ -246,6 +258,7 @@ COMMANDS = {
     "refresh": cmd_refresh, "loop": cmd_loop, "viz": cmd_viz,
     "export": cmd_export, "loadtest": cmd_loadtest, "ogcard": cmd_ogcard,
     "graph": cmd_graph, "audit": cmd_audit, "simvar": cmd_simvar,
+    "cv": cmd_cv,
 }
 
 

@@ -1,0 +1,12 @@
+# Cloudflare Pages project config (IaC) — binds the Collapse daily-leaderboard
+# D1 database to the Pages Functions (functions/api/*). With this file present,
+# deploy with NO positional dir:  npx wrangler pages deploy  (deploy.bat does).
+# See LEADERBOARD-SETUP.md.
+name = "wcpa"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wcpa-runs"
+database_id = "67c42d39-f3ab-4a72-b443-3facbad89416"

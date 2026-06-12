@@ -9,3 +9,12 @@ psycopg[binary]>=3.1
 # via `run.py ogcard`. The runtime site (static CDN) and the live http.server use none
 # of this — keep it out of any serving path.
 Pillow>=10
+
+# Optional, LOCAL build-time ONLY — the Quantum Tactics Lab computer-vision pipeline
+# (`run.py cv <clip>`, tools/cv_tactics.py). Reads formations/positions from
+# free / Creative-Commons clips into data/tactics/*.json, which the dual-mode export
+# then snapshots. NEVER imported by viz/server.py or the static CDN build, and not
+# needed to run the dashboard. Install only if you intend to analyse footage:
+#   pip install opencv-python ultralytics
+# opencv-python>=4.9
+# ultralytics>=8.1

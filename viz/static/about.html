@@ -7,12 +7,18 @@
   <meta name="description" content="About WCPA, the disclaimer, privacy policy, terms of use and affiliate disclosure for the World Cup 2026 prediction album." />
   <link rel="canonical" href="https://wcpa26.com/about.html" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Anton&family=Staatliches&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="preload" href="/fonts/anton-latin.woff2" as="font" type="font/woff2" crossorigin />
   <style>
-    :root{ --paper:#efe2c2; --card:#faf4e2; --edge:#2a1d12; --ink:#261a10; --soft:#5c4a34;
-      --gold:#b97e06; --terra:#d2541b;
+    /* self-hosted fonts (OFL), same-origin subsetted WOFF2 — no Google Fonts CDN */
+    @font-face{font-family:'Anton';font-weight:400;font-display:swap;src:url('/fonts/anton-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+    @font-face{font-family:'Anton';font-weight:400;font-display:swap;src:url('/fonts/anton-latinext.woff2') format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+    @font-face{font-family:'Staatliches';font-weight:400;font-display:swap;src:url('/fonts/staatliches-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+    @font-face{font-family:'Staatliches';font-weight:400;font-display:swap;src:url('/fonts/staatliches-latinext.woff2') format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+    @font-face{font-family:'Space Grotesk';font-weight:400 700;font-display:swap;src:url('/fonts/spacegrotesk-latin.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+    @font-face{font-family:'Space Grotesk';font-weight:400 700;font-display:swap;src:url('/fonts/spacegrotesk-latinext.woff2') format('woff2');unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF;}
+    /* dark "collector's album" palette — keep in step with style.css :root */
+    :root{ --paper:#141310; --card:#20201a; --edge:#38332b; --ink:#ece3d0; --soft:#a99c83;
+      --gold:#e3a512; --terra:#d2541b;
       --disp:'Anton',Impact,sans-serif; --lab:'Staatliches',sans-serif; --body:'Space Grotesk',system-ui,sans-serif; }
     *{box-sizing:border-box}
     body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);line-height:1.6;}
@@ -22,12 +28,12 @@
     .ball{font-family:'Georgia',serif;font-weight:700;background:var(--gold);color:#20150c;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;border:3px solid #20150c;transform:rotate(-6deg);}
     .brand{font-family:var(--disp);letter-spacing:1.5px;font-size:1.4rem;}
     h1{font-family:var(--disp);text-transform:uppercase;letter-spacing:1px;font-size:2.6rem;margin:18px 0 2px;}
-    h2{font-family:var(--disp);text-transform:uppercase;letter-spacing:.5px;font-size:1.5rem;margin:34px 0 6px;padding-top:10px;border-top:3px solid rgba(42,29,18,.18);}
+    h2{font-family:var(--disp);text-transform:uppercase;letter-spacing:.5px;font-size:1.5rem;margin:34px 0 6px;padding-top:10px;border-top:3px solid rgba(236,227,208,.16);}
     .lede{color:var(--soft);font-size:1.08rem;}
     .updated{font-family:var(--lab);letter-spacing:1.5px;color:var(--soft);font-size:.8rem;}
-    .callout{background:var(--card);border:3px solid var(--edge);border-radius:12px;padding:14px 18px;margin:14px 0;box-shadow:4px 5px 0 rgba(38,26,16,.18);}
+    .callout{background:var(--card);border:3px solid var(--edge);border-radius:12px;padding:14px 18px;margin:14px 0;box-shadow:4px 5px 0 rgba(0,0,0,.35);}
     .callout strong{color:var(--gold);}
-    code{background:var(--card);border:1px solid rgba(42,29,18,.2);border-radius:5px;padding:1px 5px;}
+    code{background:var(--card);border:1px solid rgba(236,227,208,.22);border-radius:5px;padding:1px 5px;}
     footer{margin-top:40px;font-size:.85rem;color:var(--soft);}
   </style>
 </head>
@@ -70,9 +76,9 @@
     <ul>
       <li><strong>Flag images</strong> load from <code>flagcdn.com</code> (public-domain flags).</li>
       <li><strong>Fonts</strong> load from Google Fonts.</li>
-      <li>If you click the <strong>“buy me a coffee”</strong> tip link or a <strong>shop</strong>
-        link, you leave our site for that provider (e.g. Ko-fi, or a retailer), and their privacy
-        and cookie policies then apply.</li>
+      <li>If you click the <strong>“buy me a coffee”</strong> tip link or the
+        <strong>“back the project”</strong> link, you leave our site for that provider
+        (e.g. Ko-fi, Stripe), and their privacy and cookie policies then apply.</li>
     </ul>
     <p>If we ever add privacy-respecting analytics, we'll say so here first. Questions about your
       privacy? Email <a href="mailto:hello@wcpa26.com">hello@wcpa26.com</a>.</p>
@@ -86,11 +92,11 @@
       governed by the laws of New South Wales, Australia.</p>
 
     <h2 id="affiliate">Affiliate &amp; Advertising Disclosure</h2>
-    <p>Some outbound links in “The Club Shop”, and the tip link, are <strong>affiliate links</strong>.
-      If you buy something after clicking one, we may earn a small commission <em>at no extra cost to
-      you</em>. We only feature things that fit the retro / football-culture spirit of the site, and
-      affiliate relationships never change the model's output. Links are marked <code>#Ad</code> in
-      line with the ACCC's guidance on disclosure.</p>
+    <p>WCPA currently runs <strong>no advertising and no affiliate links</strong>. The optional
+      “buy me a coffee” (Ko-fi) and “back the project” (Stripe) links are <strong>direct support</strong>
+      — your tip or contribution comes to the project, not a referral commission. If we ever add
+      affiliate or sponsored links, we'll disclose them here and mark them <code>#Ad</code> in line
+      with the ACCC's guidance on disclosure.</p>
 
     <footer>
       <p>© 2026 Samuel Bowey · WCPA. Data: martj42 · TheSportsDB · StatsBomb · BBC ·

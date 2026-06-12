@@ -17,12 +17,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.path.join(HERE, "assets", "fonts")
 STATIC = os.path.join(HERE, "static")
 
-# palette — mirrors viz/static/style.css :root
-PAPER  = (239, 226, 194)
-EDGE   = (42, 29, 18)
-INK    = (38, 26, 16)
+# palette — mirrors viz/static/style.css :root (dark "collector's album" theme)
+PAPER  = (20, 19, 16)        # --bg     #141310
+EDGE   = (56, 51, 43)        # --card-edge #38332b
+INK    = (236, 227, 208)     # --ink    #ece3d0  (light type on dark)
+DARK   = (20, 19, 16)        # type that sits ON a gold/accent fill
+SOFT   = (169, 156, 131)     # --ink-soft #a99c83
 GOLD   = (227, 165, 18)
-GOLDDP = (185, 126, 6)
+GOLDDP = (212, 154, 22)      # brightened for contrast on the dark card
 TERRA  = (210, 84, 27)
 
 # name -> Google Fonts OFL raw TTF
@@ -88,12 +90,12 @@ def build(out: str | None = None) -> str:
     img = Image.new("RGB", (W, H), PAPER)
     d = ImageDraw.Draw(img, "RGBA")
 
-    # paper surface: diagonal hatch + halftone dots
+    # dark card surface: faint light hatch + halftone dots (grain, not noise)
     for x in range(-H, W, 26):
-        d.line([(x, 0), (x + H, H)], fill=(42, 29, 18, 10), width=2)
+        d.line([(x, 0), (x + H, H)], fill=(236, 227, 208, 7), width=2)
     for yy in range(0, H, 12):
         for xx in range(0, W, 12):
-            d.ellipse([xx, yy, xx + 2, yy + 2], fill=(38, 26, 16, 20))
+            d.ellipse([xx, yy, xx + 2, yy + 2], fill=(236, 227, 208, 10))
 
     # sticker frame
     d.rectangle([18, 18, W - 18, H - 18], outline=EDGE, width=8)
@@ -101,25 +103,25 @@ def build(out: str | None = None) -> str:
 
     # foil sheen — translucent diagonal band under the type
     d.polygon([(int(W * 0.56), 0), (int(W * 0.72), 0),
-               (int(W * 0.42), H), (int(W * 0.26), H)], fill=(255, 255, 255, 28))
+               (int(W * 0.42), H), (int(W * 0.26), H)], fill=(255, 255, 255, 14))
 
     # gold "26" ball badge
     cx, cy, r = W // 2, 110, 46
     d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=GOLD, outline=EDGE, width=5)
     d.ellipse([cx - r + 8, cy - r + 8, cx + r - 8, cy + r - 8],
               outline=(250, 244, 226, 130), width=2)
-    _center(d, cx, cy - 30, "26", _font("Anton-Regular", 44), INK)
+    _center(d, cx, cy - 30, "26", _font("Anton-Regular", 44), DARK)
 
     _center(d, cx, 176, "USA  ·  CANADA  ·  MEXICO  ·  48 TEAMS  ·  104 MATCHES",
             _font("Staatliches-Regular", 27), TERRA)
     _center(d, cx, 212, "WORLD CUP", _font("Anton-Regular", 138), INK,
-            shadow=(5, (38, 26, 16, 55)))
+            shadow=(5, (0, 0, 0, 140)))
     _center(d, cx, 372, "WCPA  ’26", _font("Anton-Regular", 84), GOLDDP,
-            shadow=(4, (38, 26, 16, 50)))
+            shadow=(4, (0, 0, 0, 120)))
     _center(d, cx, 478, "THE WORLD CUP PREDICTION ALBUM",
             _font("Staatliches-Regular", 34), INK)
     _center(d, cx, 548, "wcpa26.com  ·  a prediction album, not betting advice",
-            _font("Staatliches-Regular", 24), (92, 74, 52))
+            _font("Staatliches-Regular", 24), SOFT)
 
     img.save(out, "PNG")
     print(f"  wrote {out}  ({os.path.getsize(out) // 1024} KB, {W}x{H})")

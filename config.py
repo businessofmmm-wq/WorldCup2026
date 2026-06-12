@@ -70,6 +70,22 @@ STATSBOMB_BASE = "https://raw.githubusercontent.com/statsbomb/open-data/master/d
 # Competition ids in the open data: 43 = FIFA World Cup, 72 = Women's World Cup.
 STATSBOMB_WC_COMP = 43
 
+# --------------------------------------------------------------------------- #
+# Quantum Tactics Lab — computer-vision pipeline (LOCAL, build-time only).
+# These tune tools/cv_tactics.py. They are read ONLY when `run.py cv` runs; no
+# serving path imports cv2/ultralytics. Upgraded from the yolov8-nano default to a
+# higher-capacity detector at higher input resolution for micro-detailed precision
+# (more players found, tighter boxes, the ball picked up). Override via env to trade
+# precision for speed, e.g. WCPA_YOLO_WEIGHTS=yolov8s.pt WCPA_YOLO_IMGSZ=960.
+#   yolov8n (nano) < s < m < l < x (extra-large, most precise, slowest on CPU)
+YOLO_WEIGHTS = os.environ.get("WCPA_YOLO_WEIGHTS", "yolov8x.pt")
+YOLO_IMGSZ = int(os.environ.get("WCPA_YOLO_IMGSZ", "1280"))   # inference resolution
+YOLO_CONF = float(os.environ.get("WCPA_YOLO_CONF", "0.20"))   # keep faint/distant players
+YOLO_IOU = float(os.environ.get("WCPA_YOLO_IOU", "0.5"))      # NMS overlap
+CV_HEATMAP_NX = 12          # occupancy heatmap columns (along the pitch length)
+CV_HEATMAP_NY = 8           # occupancy heatmap rows (across the pitch width)
+CV_DETECT_BALL = True       # also detect the ball (COCO 'sports ball', class 32)
+
 # News RSS feeds — international / world football focused.
 NEWS_FEEDS = [
     ("BBC Sport Football", "https://feeds.bbci.co.uk/sport/football/rss.xml"),

@@ -38,6 +38,7 @@ if ROOT not in sys.path:
 import config                                    # noqa: E402
 import db                                         # noqa: E402
 from models import field_2026                     # noqa: E402
+from models import collapse_export                # noqa: E402
 from viz import server                            # noqa: E402
 
 PROD_URL = "https://wcpa26.com"
@@ -142,11 +143,16 @@ def _export_graph(dist: str) -> None:
 
 def _copy_static(dist: str) -> None:
     static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    files = dirs = 0
     for name in os.listdir(static):
         src = os.path.join(static, name)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(dist, name))
-    print(f"  copied static/ ({len(os.listdir(static))} files)")
+            files += 1
+        elif os.path.isdir(src):                 # e.g. static/fonts/ — copy the whole tree
+            shutil.copytree(src, os.path.join(dist, name), dirs_exist_ok=True)
+            dirs += 1
+    print(f"  copied static/ ({files} files, {dirs} dirs)")
 
 
 def _cdn_config(dist: str) -> None:
@@ -156,27 +162,52 @@ def _cdn_config(dist: str) -> None:
     redirects = "\n".join(
         f"/api/{name}  /api/{name}.json  200"
         for name in ("meta", "report", "groupadv", "rankings",
-                     "news", "bracket", "fixtures")) + "\n"
+                     "news", "bracket", "fixtures",
+                     "collapse", "daily")) + "\n"
     with open(os.path.join(dist, "_redirects"), "w", encoding="utf-8") as fh:
         fh.write(redirects)
 
     # Security + caching headers (the static analogue of server.py's CSP block).
+    # CSP is already strict (self-only scripts, no eval); we add HSTS (force HTTPS
+    # for a year, incl. subdomains), a locked-down Permissions-Policy (the page
+    # needs none of these capabilities), and COOP to isolate the browsing context.
     headers = """/*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
-  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
+  Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+  Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=(), interest-cohort=()
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
 
 /api/*
   Cache-Control: public, max-age=300, stale-while-revalidate=600
 /assets/*
   Cache-Control: public, max-age=86400
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
 """
     with open(os.path.join(dist, "_headers"), "w", encoding="utf-8") as fh:
         fh.write(headers)
 
+    # robots.txt — classic search engines and social link-preview bots keep full
+    # access (SEO + share cards); AI training/scraping crawlers are turned away
+    # (the album isn't free training data). This is the polite, standards-based
+    # layer; the *enforced* block lives at the Cloudflare edge (Block AI Bots).
+    ai_bots = (
+        "GPTBot", "ChatGPT-User", "OAI-SearchBot", "anthropic-ai", "ClaudeBot",
+        "Claude-Web", "cohere-ai", "PerplexityBot", "CCBot", "Google-Extended",
+        "Applebot-Extended", "Bytespider", "Amazonbot", "Meta-ExternalAgent",
+        "meta-externalagent", "Meta-ExternalFetcher", "Diffbot", "ImagesiftBot",
+        "Omgilibot", "Omgili", "YouBot", "DataForSeoBot", "magpie-crawler",
+        "Timpibot", "PetalBot", "Scrapy",
+    )
+    robots = "# WCPA robots policy — contact: /.well-known/security.txt\n"
+    robots += "".join(f"User-agent: {b}\n" for b in ai_bots)
+    robots += "Disallow: /\n\nUser-agent: *\nAllow: /\n\n"
+    robots += f"Sitemap: {PROD_URL}/sitemap.xml\n"
     with open(os.path.join(dist, "robots.txt"), "w", encoding="utf-8") as fh:
-        fh.write(f"User-agent: *\nAllow: /\nSitemap: {PROD_URL}/sitemap.xml\n")
+        fh.write(robots)
 
     today = dt.date.today().isoformat()
     with open(os.path.join(dist, "sitemap.xml"), "w", encoding="utf-8") as fh:
@@ -188,7 +219,59 @@ def _cdn_config(dist: str) -> None:
             f"  <url><loc>{PROD_URL}/about.html</loc><lastmod>{today}</lastmod>"
             "<changefreq>monthly</changefreq><priority>0.3</priority></url>\n"
             "</urlset>\n")
-    print("  wrote _redirects, _headers, robots.txt, sitemap.xml")
+
+    # RFC 9116 security.txt — a documented disclosure contact. 'Expires' is
+    # mandatory and must stay in the future, so recompute it (now + 1 year) on
+    # every export. Written to the canonical .well-known path + a root fallback.
+    expires = (dt.datetime.now(dt.timezone.utc)
+               + dt.timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sec_txt = (f"Contact: mailto:hello@wcpa26.com\n"
+               f"Expires: {expires}\n"
+               f"Preferred-Languages: en\n"
+               f"Canonical: {PROD_URL}/.well-known/security.txt\n")
+    well_known = os.path.join(dist, ".well-known")
+    os.makedirs(well_known, exist_ok=True)
+    for path in (os.path.join(well_known, "security.txt"),
+                 os.path.join(dist, "security.txt")):
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(sec_txt)
+
+    # Cache-bust: stamp the CSS/JS links in the HTML with a short content hash.
+    # The HTML is always revalidated (max-age=0), but /style.css and /app.js are
+    # cached for hours by the browser/CDN — versioning the URL means a *changed*
+    # file is fetched fresh on the very next load (no hard-refresh) while an
+    # unchanged one keeps its long cache. Fixes "my redeploy isn't showing up".
+    import hashlib
+    def _hash(name):
+        with open(os.path.join(dist, name), "rb") as fh:
+            return hashlib.md5(fh.read()).hexdigest()[:8]
+    # Collapse is an ES module that statically imports ./collapse-core.js; stamp that
+    # import with the core's hash so a core change is fetched fresh, then version the
+    # entry module by its (now core-aware) content — same cache-bust discipline as app.js.
+    cjs = os.path.join(dist, "collapse.js")
+    if os.path.exists(cjs) and os.path.exists(os.path.join(dist, "collapse-core.js")):
+        core_v = _hash("collapse-core.js")
+        with open(cjs, encoding="utf-8") as fh:
+            txt = fh.read()
+        with open(cjs, "w", encoding="utf-8") as fh:
+            fh.write(txt.replace("'./collapse-core.js'", f"'./collapse-core.js?v={core_v}'"))
+    css_v, js_v = _hash("style.css"), _hash("app.js")
+    coll_v = _hash("collapse.js") if os.path.exists(cjs) else ""
+    for html in ("index.html", "about.html"):
+        hp = os.path.join(dist, html)
+        if not os.path.exists(hp):
+            continue
+        with open(hp, encoding="utf-8") as fh:
+            s = fh.read()
+        s = s.replace('href="/style.css"', f'href="/style.css?v={css_v}"')
+        s = s.replace('src="/app.js"', f'src="/app.js?v={js_v}"')
+        if coll_v:
+            s = s.replace('src="/collapse.js"', f'src="/collapse.js?v={coll_v}"')
+        with open(hp, "w", encoding="utf-8") as fh:
+            fh.write(s)
+
+    print("  wrote _redirects, _headers, robots.txt, sitemap.xml, security.txt; "
+          f"versioned css={css_v} js={js_v} collapse={coll_v}")
 
 
 def _matrix_signature() -> str:
@@ -242,10 +325,28 @@ def build(dist: str = "dist", matrix: bool = True) -> str:
     api_dir = os.path.join(dist, "api")
     os.makedirs(api_dir, exist_ok=True)
     print(f"Exporting WCPA → {dist}")
+    # Freeze pre-kickoff calls FIRST so the fixtures snapshot below already
+    # grades any just-finished match against its stored pre-match prediction.
+    try:
+        n = server.log_upcoming_calls()
+        if n:
+            print(f"  froze {n} pre-kickoff call(s) into predictions")
+    except Exception as exc:                       # never fail a deploy over this
+        print(f"  pre-kickoff call logging skipped: {exc}")
+    # drop artefacts a previous export wrote but this build no longer produces
+    shutil.rmtree(os.path.join(api_dir, "tactics"), ignore_errors=True)
+    for stale in ("tactics_index.json",):
+        try:
+            os.remove(os.path.join(api_dir, stale))
+        except FileNotFoundError:
+            pass
     _copy_static(dist)
     _export_graph(dist)
     _snapshot_endpoints(api_dir)
     _export_history(api_dir)
+    _p = server.predictor()
+    collapse_export.export_collapse(api_dir, _p)   # Collapse run game — live snapshot
+    collapse_export.export_daily(api_dir, _p)      # Collapse daily challenge (frozen)
     if matrix:
         _maybe_export_matrix(api_dir)
     _cdn_config(dist)

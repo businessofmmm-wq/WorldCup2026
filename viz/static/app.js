@@ -27,7 +27,7 @@ function flagHTML(url, cls, alt) {
   // No inline onerror handler (our CSP blocks inline JS): a delegated 'error'
   // listener in boot() swaps a failed flag image for the data-fb text fallback.
   const fb = esc((alt || '').slice(0, 3).toUpperCase());
-  if (url) return `<img class="${cls}" src="${esc(url)}" alt="${esc(alt || '')}" data-fb="${fb}" loading="lazy" />`;
+  if (url) return `<img class="${cls}" src="${esc(url)}" alt="${esc(alt || '')}" data-fb="${fb}" loading="lazy" decoding="async" />`;
   return `<span class="${cls} noflag">${fb}</span>`;
 }
 function toast(msg) {
@@ -140,24 +140,15 @@ function renderOdds(rep) {
       </div>
     </div>`).join('');
 
-  // cover favourite sticker
-  if (odds[0]) {
-    $('#coverFav').innerHTML = `
-      <div class="sticker foil tape" style="max-width:280px;padding:16px 18px;text-align:center">
-        <div style="font-family:var(--font-lab);letter-spacing:2px;color:var(--terra)">MODEL FAVOURITE</div>
-        ${flagHTML(odds[0].flag, 'flag', odds[0].team)}
-        <div style="font-family:var(--font-disp);font-size:2rem;margin-top:8px">${esc(odds[0].team)}</div>
-        <div style="font-family:var(--font-badge);font-size:1.6rem;color:var(--terra)">${pct(odds[0].p_win)}</div>
-        <div class="muted" style="font-size:.8rem">to lift the trophy</div>
-      </div>`;
-  }
+  // (The cover no longer reveals the favourite — the winner is the payoff of
+  // "The Whole" mural, not a spoiler on the front page.)
 
   // full ranked list
   $('#oddsList').innerHTML = odds.map((o, i) => {
     const w = Math.max(2, (o.p_win / maxWin) * 100);
     const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 24)}px" title="${pct(v)}"></span>`;
     return `
-      <div class="odds-row">
+      <div class="odds-row profile-link" data-team="${esc(o.team)}" role="button" tabindex="0" aria-label="Open ${esc(o.team)} profile">
         <span class="orank">${i + 1}</span>
         ${flagHTML(o.flag, 'flag-sm', o.team)}
         <div class="obar-wrap">
@@ -235,7 +226,7 @@ function renderGroups(g) {
   const rots = [-1, .8, -.6, 1, -.9, .5];
   $('#groupsGrid').innerHTML = Object.keys(g).sort().map((k, gi) => {
     const rows = g[k].map((t, i) => `
-      <div class="grow">
+      <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
         <span class="gpos">${i + 1}</span>
         ${flagHTML(t.flag, 'flag-sm', t.team)}
         <span class="gnm">${esc(t.team)}<small>Elo ${Math.round(t.elo)} · ${esc(t.confed)}</small></span>
@@ -290,6 +281,7 @@ async function expandRank(card) {
 }
 function renderRankings(data) {
   const rows = data.rankings || [];
+  STATE.rankings = rows;                       // cached for the team profile (attack/defence/rank)
   $('#rankBoard').innerHTML = rows.map(r => `
     <div class="rank-card ${r.rank <= 3 ? 'top3' : ''}" data-team="${esc(r.team)}"
          tabindex="0" role="button" aria-expanded="false"
@@ -430,6 +422,24 @@ function fmtDate(iso) {
   const d = new Date(iso + 'T00:00:00');
   return `${WK[d.getDay()]} ${d.getDate()} ${MO[d.getMonth()]}`;
 }
+// Localise a UTC kickoff (ISO 8601) to the viewer's own clock: time, tz abbrev
+// and their *local* calendar day (a late kickoff can land on a different day
+// depending where in the world you are).
+function fmtKick(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = `${WK[d.getDay()]} ${d.getDate()} ${MO[d.getMonth()]}`;
+  let tz = '';
+  try {
+    tz = new Intl.DateTimeFormat([], { timeZoneName: 'short' })
+           .formatToParts(d).find(p => p.type === 'timeZoneName')?.value || '';
+  } catch (e) { /* no Intl — skip the zone label */ }
+  return { time, tz, day, ms: d.getTime() };
+}
+// chronological sort key — real kickoff if known, else the listed date at UTC midnight
+const kickMs = m => m.kickoff ? Date.parse(m.kickoff) : Date.parse(m.date + 'T00:00:00Z');
 // mini win/draw/win bar used in fixture rows
 function wdwBar(ph, pd, pa, fav) {
   const seg = (cls, v, on) => `<span class="wdw-seg ${cls} ${on ? 'on' : ''}" style="width:${(v * 100).toFixed(1)}%">${v > .14 ? pct(v, 0) : ''}</span>`;
@@ -462,7 +472,9 @@ function mcCard(m, done) {
         ${mcSide(m.away, 'away', favAway, winA ? true : winH ? false : null)}
       </div>`;
   }
+  const k = fmtKick(m.kickoff);
   mid = `<div class="mc-mid">
+      ${k ? `<div class="mc-kick">${k.time}<small>${esc(k.tz)}</small></div>` : ''}
       ${wdwBar(m.p_home, m.p_draw, m.p_away, m.fav)}
       <div class="mc-line">xG ${m.exp_home_goals.toFixed(1)}–${m.exp_away_goals.toFixed(1)} · likely <b>${esc(m.top_scoreline)}</b>${m.neutral ? '' : ' · home adv'}</div>
     </div>`;
@@ -503,17 +515,23 @@ function paintFixtures() {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  const list = (tab === 'completed' ? data.completed : data.upcoming) || [];
+  // Upcoming reads forward in time; Results reads backward (latest at the top —
+  // with 104 matches over five weeks nobody scrolls for last night's score).
+  const list = [...((tab === 'completed' ? data.completed : data.upcoming) || [])]
+    .sort((a, b) => tab === 'completed' ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
   if (!list.length) {
     $('#mcList').innerHTML = `<p class="loading">${tab === 'completed'
       ? 'No results yet — the tournament hasn\'t kicked off. Check back from ' + fmtDate(data.kickoff) + '.'
       : 'No upcoming fixtures scheduled.'}</p>`;
     return;
   }
-  // group by date with a day header
+  // group by the viewer's LOCAL day (a late kickoff can fall on a different
+  // calendar day depending where in the world you are), with a day header
   let html = '', day = null;
   for (const m of list) {
-    if (m.date !== day) { day = m.date; html += `<div class="mc-day">${fmtDate(m.date)}</div>`; }
+    const k = fmtKick(m.kickoff);
+    const label = k ? k.day : fmtDate(m.date);
+    if (label !== day) { day = label; html += `<div class="mc-day">${label}</div>`; }
     html += mcCard(m, tab === 'completed');
   }
   $('#mcList').innerHTML = html;
@@ -536,6 +554,30 @@ function renderKickoff(kickoffISO) {
 }
 
 // =========================================================================
+//  TOPBAR WORLD CLOCK  — the viewer's own local time, ticking to the second
+// =========================================================================
+function startClock() {
+  const el = $('#worldClock'); if (!el) return;
+  const tEl = el.querySelector('.wc-time'), zEl = el.querySelector('.wc-zone');
+  try {
+    const parts = new Intl.DateTimeFormat([], { timeZoneName: 'short' }).formatToParts(new Date());
+    if (zEl) zEl.textContent = parts.find(p => p.type === 'timeZoneName')?.value || '';
+    el.title = 'Your local time · ' + (Intl.DateTimeFormat().resolvedOptions().timeZone || 'local');
+  } catch (e) { /* ancient browser without Intl — leave the zone label blank */ }
+  const two = n => String(n).padStart(2, '0');
+  const tick = () => {
+    const d = new Date();
+    if (tEl) tEl.textContent = `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+    el.setAttribute('datetime', d.toISOString());
+  };
+  tick();
+  // align the first interval to the next whole second so the flip lands cleanly
+  clearTimeout(startClock._t); clearInterval(startClock._i);
+  startClock._t = setTimeout(() => { tick(); startClock._i = setInterval(tick, 1000); },
+                             1000 - (Date.now() % 1000));
+}
+
+// =========================================================================
 //  MONETISATION LINKS  —  ⚙️ paste your real URLs here (see LAUNCH.md)
 // =========================================================================
 // Lean & legal: a tip jar + an optional "back the project" button. No
@@ -549,29 +591,6 @@ function wireSupport() {
   const tip = $('#tipBtn'), back = $('#backBtn');
   if (tip && LINKS.tip && !LINKS.tip.includes('YOUR_')) tip.href = LINKS.tip;
   if (back && LINKS.back && !LINKS.back.includes('YOUR_')) { back.href = LINKS.back; back.hidden = false; }
-}
-
-// =========================================================================
-//  CLUB SHOP  (non-gambling affiliate shelf — #Ad)
-// =========================================================================
-// Edit these to your real affiliate links/IDs before launch (see LAUNCH.md).
-// Honest placeholders for now: on-brand retro / blokecore football culture.
-const SHOP = [
-  { emoji: '👕', name: 'Retro & blokecore shirts', tag: 'Classic national-team & terrace kits', href: '#', note: 'affiliate' },
-  { emoji: '🧣', name: 'Scarves & terrace wear', tag: 'Bar scarves and casual labels', href: '#', note: 'affiliate' },
-  { emoji: '📒', name: 'Sticker albums & swaps', tag: 'The real thing — collect & trade', href: '#', note: 'affiliate' },
-  { emoji: '⚽', name: 'Retro match balls', tag: 'Tango, Azteca, Etrusco reissues', href: '#', note: 'affiliate' },
-];
-function renderShop() {
-  const el = $('#shopShelf'); if (!el) return;
-  el.innerHTML = SHOP.map((s, i) => `
-    <a class="shop-item" href="${esc(s.href)}" target="_blank" rel="noopener nofollow sponsored"
-       style="--rot:${[-1.4, .9, -.7, 1.2][i % 4]}deg">
-      <div class="shop-emoji">${s.emoji}</div>
-      <div class="shop-name">${esc(s.name)}</div>
-      <div class="shop-tag">${esc(s.tag)}</div>
-      <div class="shop-cta">Shop →</div>
-    </a>`).join('');
 }
 
 // =========================================================================
@@ -608,8 +627,8 @@ function scrollspy() {
       }
     });
   }, { rootMargin: '-45% 0px -50% 0px' });
-  ['odds', 'matches', 'wallchart', 'groups', 'rankings', 'lab', 'intel', 'method']
-    .forEach(id => { const s = document.getElementById(id); if (s) obs.observe(s); });
+  // observe exactly the sections the nav links to — never drifts from the markup
+  Object.keys(map).forEach(id => { const s = document.getElementById(id); if (s) obs.observe(s); });
 }
 
 // =========================================================================
@@ -720,8 +739,226 @@ function applyDailyTheme() {
 }
 
 // =========================================================================
-//  BOOT
+//  THE WHOLE  —  one living mural of the entire tournament (page 01, the funnel)
+//  Fuses five existing feeds (no new endpoint): fixtures (pulse), groupadv
+//  (funnel), bracket (knockout river), report (champion altar), news (intel).
 // =========================================================================
+let _WHOLE = null;
+function ensureData() {
+  // one cached Promise of every feed the mural + team profiles need
+  if (_WHOLE) return _WHOLE;
+  const get = (k, url, fb) => API(url).then(r => (STATE[k] = r)).catch(() => (STATE[k] = fb));
+  _WHOLE = Promise.all([
+    STATE.report ? Promise.resolve(STATE.report) : get('report', '/api/report.json', {}),
+    get('groupadv', '/api/groupadv.json', {}),
+    get('bracket', '/api/bracket.json', {}),
+    get('fixtures', '/api/fixtures.json', {}),
+    get('news', '/api/news.json', {}),
+    get('media', '/api/team_media.json', {}),   // may not exist yet → {} → flag fallback
+  ]).then(([report, groupadv, bracket, fixtures, news, media]) =>
+    ({ report: STATE.report || report, groupadv, bracket, fixtures, news, media }));
+  return _WHOLE;
+}
+const _field = t => (STATE.meta?.field || []).find(x => x.team === t) || {};
+
+async function renderWhole() {
+  let d;
+  try { d = await ensureData(); }
+  catch (e) { const l = $('#muralLoading'); if (l) l.textContent = 'the whole tournament is briefly unavailable.'; return; }
+  muralPulse(d.fixtures); muralGroups(d.groupadv);
+  $('#muralRiver').innerHTML = buildRiverSVG(d.bracket);
+  muralAltar(d.report); muralIntel(d.news);
+  const l = $('#muralLoading'); if (l) l.hidden = true;
+  startMuralClock();
+}
+
+function muralPulse(fx) {
+  const rec = fx.record || {};
+  const up = (fx.upcoming || []).find(m => m.kickoff) || (fx.upcoming || [])[0];
+  const last = (fx.completed || [])[0];
+  const ko = up && up.kickoff ? `<span class="pulse-cd" data-ko="${esc(up.kickoff)}">--:--:--</span>` : '';
+  const lastHTML = last
+    ? `${flagHTML(last.home.flag, 'flag-xs', last.home.team)}<b>${last.home_score}–${last.away_score}</b>${flagHTML(last.away.flag, 'flag-xs', last.away.team)} ${last.called ? '<span class="ok">✓</span>' : '<span class="miss">✗</span>'}`
+    : 'the cup begins 11 June';
+  const nextHTML = up
+    ? `<span class="profile-link" data-team="${esc(up.home.team)}">${flagHTML(up.home.flag, 'flag-xs', up.home.team)}${esc(up.home.team)}</span> v <span class="profile-link" data-team="${esc(up.away.team)}">${esc(up.away.team)}${flagHTML(up.away.flag, 'flag-xs', up.away.team)}</span> ${ko}`
+    : '—';
+  const recHTML = rec.played ? `called <b>${rec.called}/${rec.played}</b> · ${pct(rec.pct)}` : 'record opens at kick-off';
+  $('#muralPulse').innerHTML =
+    `<div class="pulse-cell"><span class="pulse-k">LAST</span><span class="pulse-v">${lastHTML}</span></div>` +
+    `<div class="pulse-cell"><span class="pulse-k">NEXT</span><span class="pulse-v">${nextHTML}</span></div>` +
+    `<div class="pulse-cell"><span class="pulse-k">MODEL</span><span class="pulse-v">${recHTML}</span></div>`;
+}
+
+function muralGroups(g) {
+  if (!g || g.error) { $('#muralGroups').innerHTML = ''; return; }
+  $('#muralGroups').innerHTML = '<div class="mural-h">48 → 32 · the groups</div>' +
+    Object.keys(g).sort().map(k => {
+      const teams = g[k].map(t => {
+        const c = t.adv >= 60 ? 'var(--teal)' : t.adv >= 35 ? 'var(--gold)' : 'var(--red)';
+        return `<div class="mg-row profile-link" data-team="${esc(t.team)}" title="${esc(t.team)} — ${t.adv}% to advance">
+          ${flagHTML(t.flag, 'flag-xs', t.team)}<span class="mg-nm">${esc(t.team)}</span>
+          <span class="mg-bar"><i style="width:${Math.max(3, t.adv)}%;background:${c}"></i></span></div>`;
+      }).join('');
+      return `<div class="mg-card"><div class="mg-h">${esc(k)}</div>${teams}</div>`;
+    }).join('');
+}
+
+function buildRiverSVG(bracket) {
+  if (!bracket || bracket.error || !bracket.r32) return '<p class="loading">bracket forming…</p>';
+  const wc = t => (t.winner === t.a.team ? t.a : t.b);          // the advancing (chalk/real) side
+  const R = bracket.rounds || {};
+  const cols = [bracket.r32.map(wc), (R.r16 || []).map(wc), (R.qf || []).map(wc),
+                (R.sf || []).map(wc), [bracket.champion || {}]];
+  const champ = bracket.champion && bracket.champion.team;
+  const W = 300, H = 540, padX = 18, ys = [40, 158, 268, 366, 452];
+  const xOf = (i, n) => padX + ((i + 0.5) / n) * (W - 2 * padX);
+  let currents = '', nodes = '';
+  for (let c = 0; c < cols.length - 1; c++) {
+    cols[c].forEach((card, i) => {
+      const j = Math.floor(i / 2), B = cols[c + 1][j] || {};
+      const x1 = xOf(i, cols[c].length), x2 = xOf(j, cols[c + 1].length);
+      const y1 = ys[c], y2 = ys[c + 1], my = (y1 + y2) / 2;
+      const lit = champ && card.team === champ && B.team === champ;
+      currents += `<path d="M${x1.toFixed(1)},${y1} C${x1.toFixed(1)},${my} ${x2.toFixed(1)},${my} ${x2.toFixed(1)},${y2}" fill="none" stroke="${lit ? 'var(--accent)' : 'rgba(236,227,208,.13)'}" stroke-width="${lit ? 3 : 1.1}"${lit ? ' class="lit"' : ''}/>`;
+    });
+  }
+  const labels = ['R32', 'R16', 'QF', 'SF', '★'];
+  cols.forEach((col, c) => {
+    col.forEach((card, i) => {
+      const x = xOf(i, col.length), y = ys[c], champNode = c === cols.length - 1;
+      const lit = champ && card.team === champ, r = champNode ? 13 : (c >= 2 ? 7 : 4.5);
+      const fill = (champNode || lit) ? 'var(--accent)' : (card.confed_color || '#8a8374');
+      nodes += `<g class="river-node profile-link${lit ? ' lit' : ''}" data-team="${esc(card.team || '')}" tabindex="0" role="button" aria-label="${esc(card.team || '')}">
+        <circle cx="${x.toFixed(1)}" cy="${y}" r="${r}" fill="${fill}" stroke="var(--bg)" stroke-width="2"/>
+        ${champNode ? `<text x="${x.toFixed(1)}" y="${y + 4.5}" text-anchor="middle" font-size="13">🏆</text>` : ''}
+        <title>${esc(card.team || '')}${champNode ? ' — projected champion' : ''}</title></g>`;
+    });
+    nodes += `<text x="5" y="${ys[c] + 3}" font-size="9" fill="var(--ink-soft)" class="river-lbl">${labels[c]}</text>`;
+  });
+  const cn = esc((bracket.champion && bracket.champion.team) || '');
+  return `<div class="mural-h">32 → 1 · the river</div>
+    <svg viewBox="0 0 ${W} ${H}" class="river-svg" role="img" aria-label="Knockout funnel to ${cn}">
+      ${currents}${nodes}
+      <text x="${W / 2}" y="${H - 34}" text-anchor="middle" class="river-champ">${cn}</text>
+      <text x="${W / 2}" y="${H - 18}" text-anchor="middle" class="river-sub">PROJECTED CHAMPION · ${pct(bracket.champion && bracket.champion.p_win)}</text>
+    </svg>`;
+}
+
+function muralAltar(rep) {
+  const odds = (rep && rep.title_odds) || [];
+  if (!odds.length) { $('#muralAltar').innerHTML = ''; return; }
+  const champ = odds[0];
+  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 22)}px" title="${pct(v)}"></span>`;
+  $('#muralAltar').innerHTML = `
+    <div class="mural-h">the answer</div>
+    <div class="altar-champ profile-link sticker foil" data-team="${esc(champ.team)}">
+      <div class="altar-k">THE MODEL CROWNS</div>
+      ${flagHTML(champ.flag, 'flag', champ.team)}
+      <div class="altar-nm">${esc(champ.team)}</div>
+      <div class="altar-win">${pct(champ.p_win)}</div>
+      <div class="altar-sub">to lift the trophy</div>
+    </div>
+    <div class="altar-list">
+      ${odds.slice(0, 6).map((o, i) => `<div class="altar-row profile-link" data-team="${esc(o.team)}">
+        <span class="ar-rank">${i + 1}</span>${flagHTML(o.flag, 'flag-xs', o.team)}
+        <span class="ar-nm">${esc(o.team)}</span>
+        <span class="road" title="QF · SF · Final · Win">${pip(o.p_quarter)}${pip(o.p_semi)}${pip(o.p_final, 'f')}${pip(o.p_win, 'w')}</span>
+        <span class="ar-win">${pct(o.p_win)}</span></div>`).join('')}
+    </div>`;
+}
+
+function muralIntel(news) {
+  const items = ((news && news.news) || []).slice(0, 8);
+  if (!items.length) { $('#muralIntel').innerHTML = ''; return; }
+  $('#muralIntel').innerHTML = '<span class="marg-k">INTEL</span>' + items.map(n => {
+    const fl = (n.flags || []).slice(0, 1).map(f => `<i class="tag ${esc(f)}">${esc(f)}</i>`).join('');
+    return `<span class="marg-item">${fl} ${esc(n.title)}</span>`;
+  }).join('<span class="marg-dot">•</span>');
+}
+
+function startMuralClock() {
+  clearInterval(startMuralClock._t);
+  const tick = () => {
+    const el = document.querySelector('.pulse-cd[data-ko]');
+    if (!el) { clearInterval(startMuralClock._t); return; }
+    let s = Math.max(0, Math.floor((new Date(el.getAttribute('data-ko')).getTime() - Date.now()) / 1000));
+    if (s <= 0) { el.textContent = 'KICK-OFF'; return; }
+    const d = Math.floor(s / 86400); s %= 86400;
+    const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60), ss = s % 60;
+    const p = n => String(n).padStart(2, '0');
+    el.textContent = (d ? `${d}d ` : '') + `${p(h)}:${p(m)}:${p(ss)}`;
+  };
+  tick(); startMuralClock._t = setInterval(tick, 1000);
+}
+
+// =========================================================================
+//  CANONICAL TEAM PROFILE  —  one detail view, opened from any nation anywhere
+// =========================================================================
+let _lastFocus = null;
+async function openProfile(team) {
+  if (!team) return;
+  const ov = $('#profileOverlay'), body = $('#profileBody');
+  _lastFocus = document.activeElement;
+  body.innerHTML = '<p class="loading">opening profile…</p>';
+  ov.hidden = false; document.body.classList.add('modal-open');
+  $('#profileClose').focus();
+  let d; try { d = await ensureData(); } catch (e) { d = { fixtures: {}, news: {}, media: {} }; }
+  const f = _field(team);
+  const odds = ((STATE.report && STATE.report.title_odds) || []).find(o => o.team === team) || {};
+  const rk = (STATE.rankings || []).find(r => r.team === team) || {};
+  const media = (d.media || {})[f.iso2] || (d.media || {})[team] || null;
+  const next = (d.fixtures.upcoming || []).find(m => m.home.team === team || m.away.team === team);
+  const teamNews = ((d.news && d.news.news) || []).filter(n => (n.teams || []).includes(team)).slice(0, 4);
+
+  const hero = (media && media.file)
+    ? `<figure class="pf-hero"><img src="/media/teams/${esc(media.file)}" alt="${esc(team)}" loading="lazy" decoding="async"/>
+         <figcaption class="pf-credit">📷 ${esc(media.credit || 'Wikimedia Commons')} · <a href="${esc(media.source_url || '#')}" target="_blank" rel="noopener nofollow">${esc(media.license || 'CC')}</a></figcaption></figure>`
+    : `<div class="pf-hero pf-crest" style="--c:${f.confed_color || 'var(--gold)'}">${flagHTML(f.flag, 'flag-xl', team)}</div>`;
+
+  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(4, (v || 0) * 30)}px" title="${pct(v)}"></span>`;
+  const stat = (k, v) => `<div class="pf-stat"><span>${k}</span><b>${v}</b></div>`;
+  let nextHTML = '<div class="pf-next muted">No upcoming fixture scheduled.</div>';
+  if (next) {
+    const home = next.home.team === team, opp = home ? next.away : next.home;
+    const call = next.fav === 'draw' ? 'Draw' : ((next.fav === 'home') === home ? 'Win' : 'Loss');
+    nextHTML = `<div class="pf-next"><span class="pf-k">NEXT</span>
+      ${home ? 'vs' : 'at'} ${flagHTML(opp.flag, 'flag-xs', opp.team)} <b>${esc(opp.team)}</b>
+      <span class="pf-call call-${call.toLowerCase()}">model: ${call}</span>
+      <span class="muted">${esc(next.top_scoreline || '')}</span></div>`;
+  }
+  const intelHTML = teamNews.length
+    ? `<div class="pf-intel"><span class="pf-k">INTEL</span>${teamNews.map(n =>
+        `<div class="pf-clip">${(n.flags || []).slice(0, 1).map(x => `<i class="tag ${esc(x)}">${esc(x)}</i>`).join('')} ${esc(n.title)}</div>`).join('')}</div>`
+    : '';
+
+  body.innerHTML = `
+    ${hero}
+    <div class="pf-head">
+      <h3 id="profileName">${esc(team)}</h3>
+      <div class="pf-sub">${esc(f.group ? 'Group ' + f.group : '')}${f.confed ? ' · ' + esc(f.confed) : ''} ${starHTML(f.stars)}</div>
+    </div>
+    <div class="pf-stats">
+      ${stat('Elo', f.elo != null ? Math.round(f.elo) : '—')}
+      ${stat('Rank', rk.rank ? '#' + rk.rank : '—')}
+      ${stat('Attack', rk.attack != null ? rk.attack : '—')}
+      ${stat('Defence', rk.defence != null ? rk.defence : '—')}
+    </div>
+    <div class="pf-odds">
+      <span class="pf-k">TITLE RUN</span>
+      <span class="road">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span>
+      <span class="pf-win">${pct(odds.p_win)} <small>to win</small></span>
+    </div>
+    ${nextHTML}
+    ${intelHTML}`;
+}
+function closeProfile() {
+  const ov = $('#profileOverlay');
+  if (!ov || ov.hidden) return;
+  ov.hidden = true; document.body.classList.remove('modal-open');
+  if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+}
+
 async function boot() {
   applyDailyTheme();
   scrollspy();
@@ -752,9 +989,13 @@ async function boot() {
   } catch (e) { toast('could not reach the engine — is the server running?'); }
 
   // static, always-available chrome
-  renderShop();
   wireSupport();
   renderKickoff(STATE.meta?.kickoff);
+  startClock();
+  $('#coverPromo')?.addEventListener('click', () => {
+    document.getElementById('tactics')?.scrollIntoView({ block: 'start' });
+    if (location.hash !== '#tactics') history.replaceState(null, '', '#tactics');
+  });
   $('#shareBtn')?.addEventListener('click', doShare);
 
   const safe = (fn, p, target) => API(p).then(fn).catch(() => {
@@ -766,6 +1007,23 @@ async function boot() {
   safe(renderGroups, '/api/groupadv.json', '#groupsGrid');
   safe(renderRankings, '/api/rankings.json', '#rankBoard');
   safe(renderNews, '/api/news.json', '#clippings');
+  renderWhole();                                   // page 01 — the mural funnel (self-fetches + caches)
+
+  // Open the canonical team profile from any nation marked .profile-link[data-team]
+  // (mural nodes, odds rows, group rows, pulse). Delegated so it survives re-renders.
+  // rank-cards carry data-team too but NOT .profile-link, so their expand stays intact.
+  const openFromEl = el => { const t = el && el.closest && el.closest('.profile-link[data-team]'); if (t) openProfile(t.getAttribute('data-team')); };
+  document.addEventListener('click', e => openFromEl(e.target));
+  document.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.profile-link[data-team]')) { e.preventDefault(); openFromEl(e.target); }
+    if (e.key === 'Escape') closeProfile();
+  });
+  $('#profileClose').addEventListener('click', closeProfile);
+  $('#profileOverlay').addEventListener('click', e => { if (e.target === $('#profileOverlay')) closeProfile(); });
+
+  // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module
+  // (loaded separately). The legacy Quantum Tactics Lab renderers further down are
+  // left in place but intentionally no longer wired here.
 
   // Match Centre tab switching
   $$('.mc-tab').forEach(b => b.addEventListener('click', () => {
@@ -777,7 +1035,19 @@ async function boot() {
   $('#swapBtn').addEventListener('click', () => {
     const h = $('#pickHome').value; $('#pickHome').value = $('#pickAway').value; $('#pickAway').value = h; runPredict();
   });
-  runPredict();
+  // Lazy: on the static build the Lab needs the ~1.2 MB offline prediction
+  // matrix — don't make every visitor download it at boot. Arm the first
+  // prediction when the Lab approaches the viewport (inputs above still fire it
+  // immediately if the visitor gets there first).
+  const lab = document.getElementById('lab');
+  if (lab && 'IntersectionObserver' in window) {
+    const labObs = new IntersectionObserver((es, o) => {
+      if (es.some(e => e.isIntersecting)) { o.disconnect(); runPredict(); }
+    }, { rootMargin: '600px 0px' });
+    labObs.observe(lab);
+  } else {
+    runPredict();
+  }
 
   // intel filter — live query, or client-side filter of the frozen feed when static
   $('#intelTeam').addEventListener('change', e => {
@@ -797,6 +1067,7 @@ async function boot() {
     safe(renderBracket, '/api/bracket.json');
     safe(renderGroups, '/api/groupadv.json'); safe(renderRankings, '/api/rankings.json');
     safe(renderNews, '/api/news.json');
+    STATE.report = null; _WHOLE = null; renderWhole();      // rebuild the mural from fresh feeds
     const meta = await API('/api/meta.json').catch(() => null);
     if (meta) { renderMeta(meta); renderMethod(meta); }
     setTimeout(() => toast('album refreshed ⚽'), 600);

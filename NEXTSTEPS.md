@@ -1,100 +1,89 @@
-# WCPA — Next steps (perfecting the engine for launch)
+# WCPA — Launch status & runbook
 
-_Runbook for the next working session. World Cup kicks off 11 Jun; publish
-embargo 9 Jun 08:00 AEST. All commands run locally against the local Postgres._
+_World Cup kicks off 11 Jun 2026. **WCPA launched to production 2026-06-08** —
+Samuel chose to publish ~15.5h ahead of the original 9 Jun 08:00 AEST embargo
+(explicit override, confirmed via prompt). All pipeline commands run locally
+against the local Postgres._
 
-> **Status (2026-06-08): pipeline complete.** Steps 1–5 were executed live this
-> session — goals model settled (**BP**), re-tuned + calibrated (**T=0.85**),
-> retrained + **50k-simulated**, and audited **GREEN / launch-ready**. The *only*
-> remaining step is `run.py export` + publish, **gated by the 9 Jun 08:00 AEST
-> embargo**. Everything else is done and pushed.
+## 🟢 LIVE
+- **https://wcpa26.com** — apex; Cloudflare Pages custom domain **active**, cert
+  **active** (Google CA). `/` + `/api/*` serve the album.
+- **https://www.wcpa26.com** — attached to Pages + CNAME → wcpa.pages.dev
+  (proxied); provisioning→active.
+- **https://wcpa.pages.dev** — the Pages production URL.
+- Audit: **GREEN** — 14 checks, 0 fail / 0 warn, load test passed (~786 req/s).
 
-## The lens — a quantum view of the tournament
-_Samuel's framing, and it's faithful to what the engine actually is — keep
-building through it. A frame, not a fudge: the verdicts below stay measured._
+## Infrastructure (Cloudflare — account businessofmmm@gmail.com, id b6e9…6064)
+- **Pages project `wcpa`** (wcpa.pages.dev). Deploy:
+  `npx wrangler pages deploy dist --project-name=wcpa` (or `deploy.bat`).
+- **DNS** (zone `wcpa26.com`, same CF account):
+  - apex `CNAME wcpa26.com → wcpa.pages.dev` (proxied) — replaced the GoDaddy
+    "coming soon" parking record (`A → 13.248.243.5`), deleted 2026-06-08.
+  - `CNAME www.wcpa26.com → wcpa.pages.dev` (proxied).
+  - No MX/TXT/email records.
+- **Tokens:** the wrangler OAuth token (`%APPDATA%\xdg.config\.wrangler`) has
+  `pages:write` + `zone:read` but **no `dns_records` scope** — DNS edits use the
+  dedicated **`cfat…` "Edit zone DNS" token in `Desktop\Session1.txt`** (~line 11,
+  53 chars). NB that token **fails** `/user/tokens/verify` (it's zone-scoped) but
+  **works** for DNS API calls.
 
-- **Every possibility, held in superposition.** The Monte-Carlo sim holds the
-  whole tournament as a superposition of futures; each of the **50,000** runs is
-  one sampled, collapsed world. The bivariate-Poisson scoreline grid is the
-  amplitude distribution over *every* possible scoreline — the shared term
-  `lambda3` is the coupling (the "entanglement") between home and away goals,
-  the part independent Poissons miss.
-- **Every string of knowledge, woven in.** Results, live scores, news, xG — each
-  an information string folded into one state. The lens says: don't drop a
-  string, and keep adding strings (availability, injuries) as they become free.
-- **Expand it quantumly, efficiently.** More sampled worlds = the possibility
-  space resolved more finely. Variance reduction (`models/variance.py` —
-  QMC / antithetic / control-variate) is how we expand to 50k without paying 50k
-  of cost; it's the efficient basis for the same superposition.
-- **Information → matter.** The export step is where abstract probability becomes
-  a *tangible* artifact — the static album on the CDN, the OG card, ultimately a
-  printable physical Prediction Album. That's the through-line: take the full
-  field of possibility and make it something you can hold.
+## Match-day freshness — AUTOMATED
+- **Task Scheduler task `WCPA-deploy-hourly`**: runs `deploy.bat` (ingest live →
+  retrain → simulate 50k → export → deploy) **hourly**, output →
+  `deploy_scheduled.log`. **Auto-expires 2026-07-20** then self-deletes.
+  - Runs **only while the PC is on + Samuel is logged in** (Interactive logon, no
+    stored password); a brief console window flashes each hour. For silent /
+    logged-out runs, tick "Run whether user is logged on or not" + "Hidden" in
+    Task Scheduler (needs the Windows password).
+  - Manage: `Get-ScheduledTask WCPA-deploy-hourly` / `Unregister-ScheduledTask`.
 
-## State at hand-off (2026-06-08)
-- On `wcpa-launch-prep`: variance-reduction benchmark, refreshed sim snapshot,
-  the **bivariate-Poisson goals model** (now the live default), and the
-  **50k sim** bump across config/scripts/docs/site.
-- Goals model is **pluggable** (`config.GOALS_MODEL`): `bivpois` (live) |
-  `dixon_coles`. Both share the time-decayed attack/defence MLE.
-- `SIM_RUNS = 50000`. The authoritative odds path (`simulate` / `deploy.bat`)
-  runs 50k. The live `refresh` inflow loop is now deliberately lean —
-  `REFRESH_RUNS = 1500` with `REFRESH_METHOD = "antithetic"` (mirrored-pair
-  variance reduction ≈ 3k crude on the live numbers) so match-day cycles stay
-  fast. The sim is rarely the refresh bottleneck; network ingest + the 49k-row
-  Elo/DC refit dominate. Every data string stays in the loop — just expanded
-  efficiently. Revert via `REFRESH_METHOD="mc"`, `REFRESH_RUNS=5000`.
-- Held-out verdict — **settled** (full 2018 window, 8,009 matches): BP **wins**
-  the goals model (RPS 0.1686 vs DC 0.1691; better LogLoss/Brier) and `lambda3`
-  fits to a healthy **+0.058** on modern data — real coupling, not collapsed. In
-  the full ensemble it's a dead heat (0.1668 vs 0.1667). `bivpois` locked.
+## Shipped 2026-06-12 (mid-tournament hardening pass)
+- [x] **Hourly deploy un-hung** — wrangler 4.100.0's release made bare `npx wrangler`
+      prompt "Ok to proceed?" in the scheduled task → ~16 h of silent failed deploys
+      overnight. `deploy.bat` now uses `npx --yes wrangler@4` (never prompts, major
+      pinned) + start/finish/FAILED log markers. Verified: the 18:00 task run
+      deployed clean end-to-end.
+- [x] **Sim now conditions on played matches** (`models/tournament.py`): real WC-2026
+      results (and shootout winners, once KOs start) are locked into every simulated
+      tournament; only the future is randomised. Mexico 97%+ to advance after the
+      opener, as it should be.
+- [x] **Ingest is duplicate/clobber-proof** (`sources/sportsdb.py`): TheSportsDB
+      UTC dates vs schedule local dates created ghost fixtures (SK–CZ appeared
+      twice; ~20 late-UTC kickoffs would have followed). Now: name canonicalisation
+      (USA→United States, Curacao→Curaçao…), ±1-day fixture claiming, and a real
+      score is never overwritten with NULL by the flaky feed. One-time DB merge done.
+- [x] **Honest model record**: every export freezes pre-kickoff calls into the
+      `predictions` table (`server.log_upcoming_calls`); completed matches are graded
+      against the *frozen* call, not a hindsight-refit one (`frozen_call` flag in
+      fixtures.json; the two pre-freeze results fall back to live grading).
+- [x] **Collapse daily leaderboard LIVE** — see LEADERBOARD-SETUP.md status. D1
+      `wcpa-runs` + wrangler.toml binding; submit verified/persisted/ranked on prod;
+      forged + oversized submissions rejected; ≤8 handles per network per day.
+- [x] `refresh` now refits **BP** (chained onto the DC step in `cmd_refresh`).
+- [x] Front-end: scrollspy fixed (observed two dead ids, missed three live ones);
+      Match Lab's 1.27 MB matrix now lazy-loads on approach instead of at boot;
+      Results tab newest-first; dead Quantum-Tactics-Lab code (~250 lines) culled
+      from app.js and its 74 dead files from the export (deploy: ~190→35 files);
+      collapse.js surfaces real submit errors + "↑ board" submits saved daily runs.
+- [x] **OG share card + about.html re-skinned dark** to match the album theme.
 
-## 1. Settle the goals model — DONE (2026-06-08)
-- [x] Definitive backtest on the full window (`run.py backtest 2018 --compare`,
-      8,009 held-out matches): **BP wins** the goals model (RPS 0.1686 vs DC
-      0.1691), `lambda3` = +0.058 (real coupling on modern data), ensemble a dead
-      heat (0.1668 vs 0.1667). **`bivpois` locked** in `config.py`.
-- [ ] _(Optional, post-launch)_ **Diagonal-inflated bivariate Poisson**
-      (Karlis-Ntzoufras 2003): mix BP with a draw-diagonal inflation component to
-      lift draw mass and maybe edge the ensemble. **Deferred** — the ensemble is
-      already tied and launch is imminent; not worth launch-eve model risk. Add
-      later as a third `GOALS_MODEL` and re-run `--compare`.
+## Still open (post-launch, non-blocking)
+- [ ] Real **SHOP affiliate IDs** in `viz/static/app.js` (placeholders now) →
+      re-export + redeploy.
+- [ ] _(Optional)_ **Turnstile** on the leaderboard (LEADERBOARD-SETUP.md step 3) —
+      the replay verifier + per-network cap already hold the line.
+- [ ] _(Optional)_ `security.txt` lists hello@wcpa26.com but the zone has no MX —
+      enable Cloudflare Email Routing → forward to the real inbox.
+- [ ] _(Optional)_ Diagonal-inflated bivariate Poisson as a 3rd `GOALS_MODEL`.
+- [ ] Knockout kickoff times: harvest TheSportsDB once R32 pairings are set and
+      extend `models/schedule_2026.KICKOFFS_UTC` (group stage is fully mapped).
 
-## 2. Re-tune & calibrate — DONE (2026-06-08)
-- [x] `python run.py tune` — coordinate descent found no material gain (val RPS
-      0.16823 → 0.16819; 2023+ test slice identical) — confirms the shipped
-      params are already near-optimal.
-- [x] `python run.py calibrate` — best ensemble temperature **T=0.85** improves
-      all three held-out metrics (RPS 0.1651→0.1649, LogLoss 0.8509→0.8489,
-      Brier 0.4994→0.4989).
-- [x] `data/tuned_params.json` updated (tuned params + T=0.85) and committed.
-
-## 3. Retrain + 50k simulate — DONE locally (export embargoed)
-- [x] `python run.py train` — refit Elo/draw/DC/BP; BP `lambda3` = **+0.0719** on
-      live data (NLL 12,392.7→12,384.2). Used `train` (not `refresh`) because
-      `train` also refits BP, which `refresh` currently skips — see ⚠ below.
-- [x] `python run.py simulate 50000` — fresh authoritative field: Argentina
-      19.4%, Spain 16.0%, Brazil 14.0%, England 8.0%, France 7.7%, Portugal 6.6%.
-      Regenerated sim_report.json (runs=50000), group_adv.json, draw_params.json,
-      ARCHITECTURE.md (×50k). All committed.
-- [ ] `python run.py export` — **BLOCKED by embargo** until 9 Jun 08:00 AEST.
-      The only remaining step before launch. After the embargo: `export` →
-      deploy/publish the static CDN album (the information→matter step).
-- ⚠ `refresh` retrains Elo/draw/DC but **not** BP (low-risk intra-day since BP
-      reuses DC marginals + a slow lambda3). Post-launch, add a bivpois step to
-      `cmd_refresh` so the live goals model never drifts.
-
-## 4. Variance reduction — DONE where it matters
-- [x] Applied **antithetic** to the live `refresh` sim (`REFRESH_METHOD`), cutting
-      runs 5000→1500 at equal precision. The fast match-day loop is where
-      efficiency actually pays.
-- **(n/a)** The authoritative 50k `simulate` stays crude MC on purpose: at 50k the
-      Monte-Carlo error is already ~0.18pp on the title odds, so QMC/antithetic
-      there is effort without a visible payoff. Revisit only if runs ever drop.
-
-## 5. Launch gate
-- [x] `python run.py audit --no-load` — **VERDICT: GREEN, launch-ready** (14
-      checks, 0 fail / 0 warn). Load test skipped (needs an exported build); run
-      full `audit` after export, pre-publish.
-- [ ] Walk LAUNCH.md; confirm Ko-fi / Stripe link live; OG card current.
-- [ ] Respect the 9 Jun 08:00 AEST publish embargo.
+## The engine (settled this cycle)
+- Goals model **bivpois** locked (beat Dixon-Coles on the full 2018 backtest:
+  RPS 0.1686 vs 0.1691; `lambda3` ≈ +0.06–0.07 real coupling). Tuned + calibrated
+  (ensemble **T=0.85**). 50k authoritative sim: **Argentina ~19%, Spain ~16%,
+  Brazil ~14%, England ~8%, France ~8%, Portugal ~7%**.
+- The quantum lens — 50k sampled futures held in superposition; bivariate-Poisson
+  `lambda3` coupling; variance reduction to expand efficiently; **information →
+  matter** via the static album export — is faithful to the engine; keep building
+  through it.

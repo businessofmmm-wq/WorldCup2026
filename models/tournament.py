@@ -85,11 +85,48 @@ def draw_groups(pots: list[list[str]], rng: random.Random) -> dict[str, list[str
     return groups
 
 
+WC_START_2026 = dt.date(2026, 6, 11)
+
+
+def _load_played() -> tuple[dict, dict]:
+    """Real finished WC-2026 results (+ shootout winners), keyed by team pair.
+
+    Locked into every simulated tournament so the published odds *condition on
+    what has actually happened* — the sim only randomises the future. Without
+    this, a side that already banked 6 points would still see its group
+    re-randomised 50,000 times. Empty dicts (e.g. pre-tournament, or no DB)
+    reproduce the unconditioned sim exactly.
+    """
+    results: dict = {}
+    shootouts: dict = {}
+    try:
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT home_team, away_team, home_score, away_score FROM matches "
+                "WHERE tournament='FIFA World Cup' AND match_date >= %s "
+                "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+                (WC_START_2026,)).fetchall()
+            results = {(h, a): (hs, as_) for h, a, hs, as_ in rows}
+            srows = conn.execute(
+                "SELECT s.home_team, s.away_team, s.winner FROM shootouts s "
+                "JOIN matches m ON m.match_date = s.match_date "
+                "  AND m.home_team = s.home_team AND m.away_team = s.away_team "
+                "WHERE m.tournament='FIFA World Cup' AND m.match_date >= %s "
+                "  AND s.winner IS NOT NULL",
+                (WC_START_2026,)).fetchall()
+            shootouts = {(h, a): w for h, a, w in srows}
+    except Exception:
+        pass                                     # no DB / no table → uncondition
+    return results, shootouts
+
+
 class Tournament:
     def __init__(self, predictor: Predictor | None = None, seed: int | None = None):
         self.pred = predictor or Predictor()
         self.elo = self.pred.elo
         self.rng = random.Random(seed)
+        # Played-match conditioning (real scores override sampling).
+        self.real_results, self.real_shootouts = _load_played()
         # cache scoreline grids per ordered pair (neutral) — big speed win
         self._grid_cache: dict[tuple, tuple] = {}
         # Stable QMC dimension for every match decision (knockouts first, on the
@@ -107,6 +144,15 @@ class Tournament:
         # The uniform source for the *current* simulation. Default = crude MC, so
         # an unconfigured Tournament behaves exactly like before (the live path).
         self.src: qmc.UniformSource = qmc.PRNGSource(self.rng)
+
+    def _real_score(self, home: str, away: str) -> tuple[int, int] | None:
+        """The actual result for this pairing, if it has been played (either
+        orientation — scores swapped to match the asked order)."""
+        r = self.real_results.get((home, away))
+        if r is not None:
+            return r
+        r = self.real_results.get((away, home))
+        return (r[1], r[0]) if r is not None else None
 
     def _sample_score(self, home: str, away: str, dim: int) -> tuple[int, int]:
         key = (home, away)
@@ -128,8 +174,19 @@ class Tournament:
         return cached[-1][0]
 
     def _knockout(self, a: str, b: str, dim: int) -> str:
-        """Single match; on a sampled draw, settle by relative win odds."""
-        ha, hb = self._sample_score(a, b, dim)
+        """Single match; on a sampled draw, settle by relative win odds.
+        A pairing that has really been played returns its real winner."""
+        real = self._real_score(a, b)
+        if real is not None:
+            ha, hb = real
+            if ha != hb:
+                return a if ha > hb else b
+            w = self.real_shootouts.get((a, b)) or self.real_shootouts.get((b, a))
+            if w in (a, b):
+                return w                  # drawn KO, known shootout winner
+            ha, hb = 0, 0                 # drawn, winner unknown → odds coin below
+        else:
+            ha, hb = self._sample_score(a, b, dim)
         if ha > hb:
             return a
         if hb > ha:
@@ -151,7 +208,9 @@ class Tournament:
             stats = {t: {"pts": 0, "gd": 0, "gf": 0} for t in teams}
             for pi, (i, j) in enumerate(PAIRS):
                 h, a = teams[i], teams[j]
-                hs, as_ = self._sample_score(h, a, self._dim[("grp", g, pi)])
+                real = self._real_score(h, a)
+                hs, as_ = real if real is not None else \
+                    self._sample_score(h, a, self._dim[("grp", g, pi)])
                 self._apply(stats, h, a, hs, as_)
             ranked = sorted(teams, key=lambda t: (stats[t]["pts"], stats[t]["gd"],
                                                   stats[t]["gf"], self.src.rand()),

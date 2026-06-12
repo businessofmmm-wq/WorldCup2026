@@ -10,3 +10,15 @@ viz/_shots/
 viz/assets/fonts/
 *.log
 data/*.log
+.wrangler/
+
+# Quantum Tactics Lab — CV pipeline (local, build-time only).
+# (No inline comments on pattern lines — git would treat the '#...' as part of the pattern.)
+# Source clips are free / CC-licensed ONLY, never broadcast — keep them local; track the README.
+footage/*
+!footage/README.txt
+# CV + projection output snapshots:
+data/tactics/
+# YOLO model weights cache:
+*.pt
+yolo*.pt

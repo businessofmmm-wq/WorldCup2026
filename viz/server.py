@@ -65,12 +65,13 @@ CONTENT_TYPES = {
 # is what stops anything that slips past (e.g. an injected inline event handler)
 # from executing. 'unsafe-inline' is allowed for *styles* only (the hand-rolled
 # UI uses inline style= throughout); scripts are pinned to same-origin, so inline
-# event handlers won't run. Flags load from flagcdn; display fonts from Google.
+# event handlers won't run. Flags load from flagcdn; fonts are self-hosted
+# same-origin (WOFF2 under /fonts/), so no third-party font origin is allowed.
 CSP = (
     "default-src 'self'; "
     "img-src 'self' https://flagcdn.com data:; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-    "font-src https://fonts.gstatic.com; "
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self'; "
     "script-src 'self'; "
     "connect-src 'self'; "
     "base-uri 'none'; "
@@ -380,6 +381,7 @@ def ep_bracket(_q):
 
 
 # The tournament window — used to scope the Match Centre to WC 2026 fixtures.
+from models import schedule_2026               # noqa: E402
 WC_START = dt.date(2026, 6, 11)
 
 
@@ -387,10 +389,64 @@ def _outcome(hs: int, as_: int) -> str:
     return "home" if hs > as_ else "away" if as_ > hs else "draw"
 
 
+def _kickoff_utc(home: str, away: str) -> dt.datetime | None:
+    iso = schedule_2026.KICKOFFS_UTC.get((home, away))
+    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")) if iso else None
+
+
+def log_upcoming_calls(horizon_hours: int = 36) -> int:
+    """Freeze the model's pre-match call for every WC fixture kicking off within
+    `horizon_hours` (the hourly export keeps these fresh). ep_fixtures then
+    grades completed matches against the *stored* pre-kickoff call rather than a
+    prediction recomputed from ratings that have already absorbed the result —
+    the difference between an honest record and a hindsight-flattered one."""
+    p = predictor()
+    now = dt.datetime.now(dt.timezone.utc)
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT match_date, home_team, away_team FROM matches "
+            "WHERE tournament='FIFA World Cup' AND match_date >= %s "
+            "AND home_score IS NULL ORDER BY match_date, id",
+            (now.date() - dt.timedelta(days=1),)).fetchall()
+    n = 0
+    for d, h, a in rows:
+        ko = _kickoff_utc(h, a) or dt.datetime.combine(
+            d, dt.time(12), tzinfo=dt.timezone.utc)
+        if now - dt.timedelta(hours=3) <= ko <= now + dt.timedelta(hours=horizon_hours):
+            try:
+                p.predict(h, a, neutral=True, log=True, match_date=d)
+                n += 1
+            except Exception:
+                pass                        # one bad fixture never blocks the rest
+    return n
+
+
+def _frozen_calls(conn) -> dict:
+    """Latest stored pre-kickoff prediction per WC fixture, keyed (home, away).
+    Predictions are only logged while a fixture is unplayed, so every row
+    predates the result reaching the model; the kickoff cutoff (when known)
+    additionally drops anything logged in-play."""
+    rows = conn.execute(
+        "SELECT home_team, away_team, created_at, p_home, p_draw, p_away, "
+        "       exp_home_goals, exp_away_goals, top_scoreline "
+        "FROM predictions WHERE match_date >= %s ORDER BY created_at",
+        (WC_START,)).fetchall()
+    out: dict = {}
+    for h, a, created, ph, pd_, pa, xh, xa, ts in rows:
+        ko = _kickoff_utc(h, a)
+        if ko is not None and created is not None and created > ko:
+            continue
+        out[(h, a)] = {"p_home": ph, "p_draw": pd_, "p_away": pa,
+                       "exp_home_goals": xh, "exp_away_goals": xa,
+                       "top_scoreline": ts}
+    return out
+
+
 def ep_fixtures(q) -> dict:
     """Match Centre: every WC 2026 fixture with the model's call. Upcoming ties
     carry a live ensemble prediction; completed ties carry the real score plus
-    whether the model called the result (a running scoreboard during the cup).
+    whether the model called the result (a running scoreboard during the cup) —
+    graded against the prediction *frozen before kickoff* whenever one exists.
 
     The reliable "not yet played" signal is a NULL score — the imported schedule
     tags future fixtures inconsistently in `status`, so we key off the score.
@@ -405,24 +461,31 @@ def ep_fixtures(q) -> dict:
             WHERE tournament = 'FIFA World Cup' AND match_date >= %s
             ORDER BY match_date, id
             """, (WC_START,)).fetchall()
+        frozen = _frozen_calls(conn)
 
     upcoming, completed = [], []
     played = called = 0
     for (d, home, away, hs, as_, neutral, city, country) in rows:
         neutral = bool(neutral)
         pr = p.predict(home, away, neutral=neutral, log=False)
-        fav = max(("home", pr["p_home"]), ("draw", pr["p_draw"]),
-                  ("away", pr["p_away"]), key=lambda kv: kv[1])[0]
+        done = hs is not None and as_ is not None
+        # Completed ties are shown + graded on the frozen pre-kickoff call when
+        # one was stored; the live recompute is only the (pre-tournament) fallback.
+        fz = frozen.get((home, away)) if done else None
+        view = {**pr, **fz} if fz else pr
+        fav = max(("home", view["p_home"]), ("draw", view["p_draw"]),
+                  ("away", view["p_away"]), key=lambda kv: kv[1])[0]
         base = {
             "date": d.isoformat(),
             "home": _team_card(home, pr["elo_home"]),
             "away": _team_card(away, pr["elo_away"]),
             "neutral": neutral, "venue": (city or "") + (", " + country if country else ""),
-            "p_home": pr["p_home"], "p_draw": pr["p_draw"], "p_away": pr["p_away"],
-            "fav": fav, "exp_home_goals": pr["exp_home_goals"],
-            "exp_away_goals": pr["exp_away_goals"], "top_scoreline": pr["top_scoreline"],
+            "p_home": view["p_home"], "p_draw": view["p_draw"], "p_away": view["p_away"],
+            "fav": fav, "exp_home_goals": view["exp_home_goals"],
+            "exp_away_goals": view["exp_away_goals"], "top_scoreline": view["top_scoreline"],
+            "kickoff": schedule_2026.KICKOFFS_UTC.get((home, away)),
         }
-        if hs is None or as_ is None:           # not played yet
+        if not done:                            # not played yet
             upcoming.append(base)
         else:
             actual = _outcome(hs, as_)
@@ -430,7 +493,8 @@ def ep_fixtures(q) -> dict:
             played += 1
             called += int(ok)
             base.update({"home_score": hs, "away_score": as_,
-                         "actual": actual, "called": ok})
+                         "actual": actual, "called": ok,
+                         "frozen_call": bool(fz)})
             completed.append(base)
 
     completed.reverse()                          # most-recent result first
@@ -446,11 +510,132 @@ def ep_fixtures(q) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Quantum Tactics Lab — superposition projection (always), plus a CV board and a
+# collapse overlay when those are locally available. No CV runs here: the heavy
+# pipeline (tools/cv_tactics.py) is build-time only and writes data/tactics/<key>.json;
+# this endpoint only *reads* that JSON if it exists.
+# --------------------------------------------------------------------------- #
+TACTICS_DIR = os.path.join(DATA, "tactics")
+
+
+def _tactics_fixtures() -> list[dict]:
+    """One lightweight pass over the WC fixtures, keyed for the Lab. Reuses ep_fixtures
+    so kickoff/score/venue logic stays in one place."""
+    from models import tactics
+    fx = ep_fixtures({})
+    out = []
+    for status, rows in (("upcoming", fx.get("upcoming", [])),
+                         ("completed", fx.get("completed", []))):
+        for r in rows:
+            home, away = r["home"]["team"], r["away"]["team"]
+            key = tactics.match_key(home, away, r["date"])
+            out.append({
+                "key": key, "home": home, "away": away, "date": r["date"],
+                "neutral": r.get("neutral", True), "kickoff": r.get("kickoff"),
+                "status": status,
+                "home_score": r.get("home_score"), "away_score": r.get("away_score"),
+            })
+    return out
+
+
+def _cv_packet(key: str) -> dict | None:
+    path = os.path.join(TACTICS_DIR, f"{key}.json")
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def ep_tactics_index(_q) -> dict:
+    """List analysable matches: every 2026 fixture, plus any local CV showcase whose key
+    isn't a scheduled fixture. Each entry flags whether a CV board / timeline exists."""
+    fixtures = _tactics_fixtures()
+    keys = {f["key"] for f in fixtures}
+    items = []
+    for f in fixtures:
+        items.append({
+            "key": f["key"], "home": f["home"], "away": f["away"],
+            "date": f["date"], "kickoff": f["kickoff"], "status": f["status"],
+            "home_card": _team_card(f["home"]), "away_card": _team_card(f["away"]),
+            "has_cv": _cv_packet(f["key"]) is not None,
+        })
+    # curated CV showcases that aren't on the schedule
+    if os.path.isdir(TACTICS_DIR):
+        for name in sorted(os.listdir(TACTICS_DIR)):
+            if not name.endswith(".json"):
+                continue
+            k = name[:-5]
+            if k in keys:
+                continue
+            cv = _cv_packet(k) or {}
+            items.append({"key": k, "home": cv.get("home_name", k), "away": cv.get("away_name", ""),
+                          "date": None, "kickoff": None, "status": "showcase",
+                          "has_cv": True})
+    return {"matches": items, "n": len(items),
+            "note": "Every fixture carries the model's pre-match superposition. A CV "
+                    "board appears for matches analysed locally from rights-cleared "
+                    "footage; a collapse overlay appears once a result is in."}
+
+
+def ep_tactics(q) -> dict:
+    """The full tactical packet for one match key: the model superposition (always),
+    a CV board if present, a live timeline if available, and a collapse overlay once
+    the fixture is finished."""
+    from models import tactics
+    key = q.get("match", [None])[0]
+    if not key:
+        return {"error": "match key required (?match=<key>)"}
+
+    fixtures = {f["key"]: f for f in _tactics_fixtures()}
+    fx = fixtures.get(key)
+    cv = _cv_packet(key)
+
+    if fx is None and cv is None:
+        return {"error": f"unknown match key: {key}"}
+
+    if fx is not None:
+        home, away, neutral = fx["home"], fx["away"], fx["neutral"]
+    else:                                            # CV-only showcase
+        home = cv.get("home_name") or "Home"
+        away = cv.get("away_name") or "Away"
+        neutral = True
+
+    packet = tactics.project(predictor(), home, away, neutral=neutral)
+    packet["key"] = key
+    packet["home_card"] = _team_card(home, packet["elo"]["home"])
+    packet["away_card"] = _team_card(away, packet["elo"]["away"])
+    packet["cv"] = cv                                 # may be None — front-end degrades
+
+    if fx is not None:
+        packet["date"] = fx["date"]
+        packet["kickoff"] = fx["kickoff"]
+        packet["status"] = fx["status"]
+        if fx.get("home_score") is not None and fx.get("away_score") is not None:
+            timeline = []
+            try:                                      # best-effort live timeline
+                from sources import sportsdb
+                eid = sportsdb.find_event_id(home, away, fx["date"])
+                tl = sportsdb.event_timeline(eid) if eid else {}
+                timeline = tl.get("events", []) if tl else []
+            except Exception:
+                timeline = []
+            packet = tactics.collapse(
+                packet, real_score=(fx["home_score"], fx["away_score"]),
+                timeline=timeline)
+            packet["has_timeline"] = bool(timeline)
+    return packet
+
+
 ROUTES = {
     "/api/meta": ep_meta, "/api/report": ep_report, "/api/groupadv": ep_groupadv,
     "/api/rankings": ep_rankings, "/api/history": ep_history,
     "/api/predict": ep_predict, "/api/news": ep_news, "/api/bracket": ep_bracket,
     "/api/fixtures": ep_fixtures,
+    "/api/tactics_index": ep_tactics_index, "/api/tactics": ep_tactics,
 }
 
 
