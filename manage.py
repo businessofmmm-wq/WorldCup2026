@@ -220,36 +220,47 @@ def _deploy_cmd():
             "--project-name=wcpa", "--branch=main", "--commit-dirty=true"]
 
 
-def action_full_deploy():
-    print(banner("\n  REFRESH & DEPLOY — full pipeline → push to Cloudflare"))
-    print("  Steps: ingest live+news · train · simulate 50k · export dist · deploy")
-    if not confirm("This publishes to the LIVE site. Continue? [y/N]"):
+def _export_verified():
+    """Rebuild ./dist from source via `run.py export`, then verify the exported
+    static assets byte-match viz/static — so a stale or truncated CSS/JS can never
+    ship (the bug that kept the new profile card unstyled in production)."""
+    import filecmp
+    if run_cmd([PY, "run.py", "export", "dist"],
+               label="export -> ./dist (static + API + cache-bust)") != 0:
+        print(bad("  export failed — nothing deployed.")); return False
+    for f in ("style.css", "app.js", "index.html"):
+        src = os.path.join(ROOT, "viz", "static", f)
+        dst = os.path.join(ROOT, "dist", f)
+        if not os.path.exists(dst):
+            print(bad(f"  dist/{f} missing after export — aborting.")); return False
+        if f == "index.html":                       # legit differs (cache-bust stamps) — just require it's whole
+            if "</html>" not in open(dst, encoding="utf-8", errors="replace").read():
+                print(bad("  dist/index.html looks truncated — aborting.")); return False
+        elif not filecmp.cmp(src, dst, shallow=False):
+            print(bad(f"  exported dist/{f} != source (stale/truncated) — aborting.")); return False
+    print(ok("  export verified — dist static assets match source."))
+    return True
+
+
+def action_deploy():
+    print(banner("\n  DEPLOY — rebuild ./dist from source, then push to Cloudflare"))
+    print(f"  {DIM}Always re-exports + re-stamps so CSS/JS/data ship together (never stale).{RST}")
+    full = confirm("  Refresh live data first (ingest results+news · retrain · re-sim 50k)? [y/N]")
+    if not confirm("  This publishes to the LIVE site. Continue? [y/N]"):
         print(warn("  cancelled")); return
-    steps = [
-        (["run.py", "ingest", "live"], "ingest live results"),
-        (["run.py", "ingest", "news"], "ingest news"),
-        (["run.py", "train"], "retrain ratings"),
-        (["run.py", "simulate", "50000"], "simulate 50,000 tournaments"),
-        (["run.py", "export", "dist"], "export static site -> ./dist"),
-    ]
-    for args, label in steps:
-        if run_cmd([PY, *args], label=label) != 0:
-            print(bad(f"  '{label}' failed — aborting before deploy.")); return
+    if full:
+        for args, label in [(["ingest", "live"], "ingest live results"),
+                            (["ingest", "news"], "ingest news"),
+                            (["train"], "retrain ratings"),
+                            (["simulate", "50000"], "simulate 50,000 tournaments")]:
+            if run_cmd([PY, "run.py", *args], label=label) != 0:
+                print(bad(f"  '{label}' failed — aborting before deploy.")); return
+    if not _export_verified():
+        return
     print(banner("\n  deploying ./dist to Cloudflare Pages…"))
     rc = run_cmd(_deploy_cmd(), shell=(os.name == "nt"), label="wrangler pages deploy")
-    print(ok(f"\n  LIVE — {PROD}") if rc == 0 else bad(f"\n  deploy exited {rc}"))
-
-
-def action_frontend_deploy():
-    print(banner("\n  REDEPLOY FRONTEND ONLY — push ./dist as-is (CSS/JS/HTML)"))
-    print(f"  {DIM}No pipeline re-run; ships whatever is in ./dist now.{RST}")
-    dist = os.path.join(ROOT, "dist")
-    if not os.path.isdir(dist):
-        print(bad("  ./dist not found — run a full export first (option 6 → export).")); return
-    if not confirm("Publish current ./dist to the LIVE site? [y/N]"):
-        print(warn("  cancelled")); return
-    rc = run_cmd(_deploy_cmd(), shell=(os.name == "nt"), label="wrangler pages deploy")
-    print(ok(f"\n  LIVE — {PROD}") if rc == 0 else bad(f"\n  deploy exited {rc}"))
+    print(ok(f"\n  LIVE — {PROD}  ·  hard-refresh with Ctrl+F5") if rc == 0
+          else bad(f"\n  deploy exited {rc}"))
 
 
 def action_watch():
@@ -331,8 +342,7 @@ def action_viz():
 MENU = [
     ("Status & health",        "live site freshness, matches, model record", action_status),
     ("Live refresh",           "pull results+news → retrain → re-sim (local)", action_refresh),
-    ("Refresh & deploy",       "full pipeline → export → push to Cloudflare", action_full_deploy),
-    ("Redeploy frontend only", "push ./dist (CSS/JS/HTML) to Cloudflare",     action_frontend_deploy),
+    ("Deploy",                 "rebuild ./dist from source → verify → push to Cloudflare", action_deploy),
     ("Watch mode",             "auto-refresh every N min (match-day loop)",   action_watch),
     ("Pipeline & tools",       "ingest/train/backtest/tune/simulate/predict…", action_pipeline),
     ("Open local dashboard",   "run the retro dashboard on :8008",            action_viz),
@@ -380,7 +390,7 @@ def main():
     elif arg == "refresh":
         action_refresh()
     elif arg == "deploy":
-        action_full_deploy()
+        action_deploy()
     elif arg in (None,):
         menu()
     else:
