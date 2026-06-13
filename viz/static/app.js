@@ -1361,9 +1361,7 @@ async function boot() {
   }, { passive: true });
   window.addEventListener('resize', () => { if (_pf.team) positionProfile(_pf.anchor); });
 
-  // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module
-  // (loaded separately). The legacy Quantum Tactics Lab renderers further down are
-  // left in place but intentionally no longer wired here.
+  // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module.
 
   // Match Centre tab switching
   $$('.mc-tab').forEach(b => b.addEventListener('click', () => {
