@@ -265,14 +265,13 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
-  <!-- Shared national-team profile — one canonical detail view, opened from any
-       nation anywhere (mural, rankings, groups, intel, bracket). Keeps per-team
-       detail in ONE place instead of repeating it across pages. -->
-  <div class="profile-overlay" id="profileOverlay" hidden>
-    <div class="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileName" id="profileModal">
-      <button class="profile-close" id="profileClose" type="button" aria-label="Close profile">✕</button>
-      <div class="profile-body" id="profileBody"></div>
-    </div>
+  <!-- Shared 2026 World Cup national-team profile — one condensed card opened from
+       any nation (mural, rankings, groups, intel, bracket): hover-preview + click
+       to pin on desktop, a tap-driven bottom sheet on touch / small screens. -->
+  <div class="pf-scrim" id="profileScrim" hidden></div>
+  <div class="pf-card" id="profileCard" role="dialog" aria-labelledby="profileName" hidden>
+    <button class="pf-close" id="profileClose" type="button" aria-label="Close profile">✕</button>
+    <div class="pf-card-body" id="profileCardBody"></div>
   </div>
 
   <script src="/app.js" defer></script>

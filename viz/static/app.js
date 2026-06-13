@@ -1100,66 +1100,113 @@ function syncLivePill() {
 //  CANONICAL TEAM PROFILE  —  one detail view, opened from any nation anywhere
 // =========================================================================
 let _lastFocus = null;
-async function openProfile(team) {
-  if (!team) return;
-  const ov = $('#profileOverlay'), body = $('#profileBody');
-  _lastFocus = document.activeElement;
-  body.innerHTML = '<p class="loading">opening profile…</p>';
-  ov.hidden = false; document.body.classList.add('modal-open');
-  $('#profileClose').focus({ preventScroll: true });
-  let d; try { d = await ensureData(); } catch (e) { d = { fixtures: {}, news: {}, media: {} }; }
+// Canonical 2026 World Cup national-team profile. One condensed card, opened from
+// any nation anywhere (mural, rankings, odds, groups, intel, bracket). On a fine
+// pointer it previews on hover and pins on click; on touch / small screens it
+// opens as a tap-driven bottom sheet. Everything it shows already lives in STATE
+// (meta/report/rankings/fixtures/news), so the card builds synchronously and hover
+// feels instant — and it never dumps content at the page foot again.
+const _pf = { team: null, pinned: false, anchor: null, t: 0 };
+const _pfSmall = () => matchMedia('(max-width: 560px)').matches;
+const _pfFine  = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
+
+function profileBody(team) {
   const f = _field(team);
   const odds = ((STATE.report && STATE.report.title_odds) || []).find(o => o.team === team) || {};
   const rk = (STATE.rankings || []).find(r => r.team === team) || {};
-  const media = (d.media || {})[f.iso2] || (d.media || {})[team] || null;
-  const next = (d.fixtures.upcoming || []).find(m => m.home.team === team || m.away.team === team);
-  const teamNews = ((d.news && d.news.news) || []).filter(n => (n.teams || []).includes(team)).slice(0, 4);
+  const next = ((STATE.fixtures && STATE.fixtures.upcoming) || []).find(m => m.home.team === team || m.away.team === team);
+  const teamNews = (((STATE.news && STATE.news.news)) || []).filter(n => (n.teams || []).includes(team)).slice(0, 2);
+  const accent = f.confed_color || 'var(--gold)';
+  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(4, (v || 0) * 26)}px" title="${pct(v)}"></span>`;
 
-  const hero = (media && media.file)
-    ? `<figure class="pf-hero"><img src="/media/teams/${esc(media.file)}" alt="${esc(team)}" loading="lazy" decoding="async"/>
-         <figcaption class="pf-credit">📷 ${esc(media.credit || 'Wikimedia Commons')} · <a href="${esc(media.source_url || '#')}" target="_blank" rel="noopener nofollow">${esc(media.license || 'CC')}</a></figcaption></figure>`
-    : `<div class="pf-hero pf-crest" style="--c:${f.confed_color || 'var(--gold)'}">${flagHTML(f.flag, 'flag-xl', team)}</div>`;
-
-  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(4, (v || 0) * 30)}px" title="${pct(v)}"></span>`;
-  const stat = (k, v) => `<div class="pf-stat"><span>${k}</span><b>${v}</b></div>`;
-  let nextHTML = '<div class="pf-next muted">No upcoming fixture scheduled.</div>';
+  let nextHTML = '';
   if (next) {
     const home = next.home.team === team, opp = home ? next.away : next.home;
     const call = next.fav === 'draw' ? 'Draw' : ((next.fav === 'home') === home ? 'Win' : 'Loss');
-    nextHTML = `<div class="pf-next"><span class="pf-k">NEXT</span>
-      ${home ? 'vs' : 'at'} ${flagHTML(opp.flag, 'flag-xs', opp.team)} <b>${esc(opp.team)}</b>
-      <span class="pf-call call-${call.toLowerCase()}">model: ${call}</span>
-      <span class="muted">${esc(next.top_scoreline || '')}</span></div>`;
+    const ph = matchPhase(next), k = fmtKick(next.kickoff);
+    const when = ph.phase === 'live'
+      ? `<b class="pf-live"><span class="livedot"></span>LIVE</b>`
+      : (k ? esc(k.day) : '');
+    nextHTML = `<div class="pf-row pf-next"><span class="pf-k">NEXT</span>
+      <span class="pf-next-opp">${home ? 'vs' : 'at'} ${flagHTML(opp.flag, 'flag-xs', opp.team)} <b>${esc(opp.team)}</b></span>
+      <span class="pf-call call-${call.toLowerCase()}">${call}</span>
+      <span class="pf-when">${when}</span></div>`;
   }
   const intelHTML = teamNews.length
-    ? `<div class="pf-intel"><span class="pf-k">INTEL</span>${teamNews.map(n =>
-        `<div class="pf-clip">${(n.flags || []).slice(0, 1).map(x => `<i class="tag ${esc(x)}">${esc(x)}</i>`).join('')} ${esc(n.title)}</div>`).join('')}</div>`
+    ? `<div class="pf-row pf-intel"><span class="pf-k">INTEL</span><div class="pf-clips">${teamNews.map(n =>
+        `<div class="pf-clip">${(n.flags || []).slice(0, 1).map(x => `<i class="tag ${esc(x)}">${esc(x)}</i>`).join('')} ${esc(n.title)}</div>`).join('')}</div></div>`
     : '';
 
-  body.innerHTML = `
-    ${hero}
-    <div class="pf-head">
-      <h3 id="profileName">${esc(team)}</h3>
-      <div class="pf-sub">${esc(f.group ? 'Group ' + f.group : '')}${f.confed ? ' · ' + esc(f.confed) : ''} ${starHTML(f.stars)}</div>
+  return `
+    <div class="pf-banner" style="--c:${accent}">
+      ${flagHTML(f.flag, 'flag-lg', team)}
+      <div class="pf-id">
+        <h3 id="profileName">${esc(team)}</h3>
+        <div class="pf-sub">${f.group ? 'Group ' + esc(f.group) : ''}${f.confed ? (f.group ? ' · ' : '') + esc(f.confed) : ''}</div>
+      </div>
+      <span class="pf-tag">WC ’26</span>
+    </div>
+    <div class="pf-headline">
+      ${starHTML(f.stars)}
+      <span class="pf-win">${pct(odds.p_win)}<small>to win</small></span>
     </div>
     <div class="pf-stats">
-      ${stat('Elo', f.elo != null ? Math.round(f.elo) : '—')}
-      ${stat('Rank', rk.rank ? '#' + rk.rank : '—')}
-      ${stat('Attack', rk.attack != null ? rk.attack : '—')}
-      ${stat('Defence', rk.defence != null ? rk.defence : '—')}
+      <div class="pf-stat"><span>Elo</span><b>${f.elo != null ? Math.round(f.elo) : '—'}</b></div>
+      <div class="pf-stat"><span>Rank</span><b>${rk.rank ? '#' + rk.rank : '—'}</b></div>
+      <div class="pf-stat"><span>Attack</span><b>${rk.attack != null ? rk.attack : '—'}</b></div>
+      <div class="pf-stat"><span>Defence</span><b>${rk.defence != null ? rk.defence : '—'}</b></div>
     </div>
-    <div class="pf-odds">
-      <span class="pf-k">TITLE RUN</span>
-      <span class="road">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span>
-      <span class="pf-win">${pct(odds.p_win)} <small>to win</small></span>
-    </div>
+    <div class="pf-row pf-odds"><span class="pf-k">TITLE&nbsp;RUN</span>
+      <span class="road" title="QF · SF · Final · Win">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span></div>
     ${nextHTML}
     ${intelHTML}`;
 }
+
+function showProfile(team, anchor, pinned) {
+  if (!team) return;
+  const card = $('#profileCard'), scrim = $('#profileScrim');
+  if (!card) return;
+  clearTimeout(_pf.t);
+  if (pinned) _lastFocus = document.activeElement;
+  _pf.team = team; _pf.anchor = anchor || null; _pf.pinned = !!pinned;
+  $('#profileCardBody').innerHTML = profileBody(team);
+  card.classList.toggle('pinned', !!pinned);
+  card.hidden = false;
+  const sheet = !!pinned && _pfSmall();          // dim + lock scroll only for the mobile sheet
+  if (scrim) scrim.hidden = !sheet;
+  document.body.classList.toggle('modal-open', sheet);
+  positionProfile(anchor);
+  if (sheet) { const c = $('#profileClose'); if (c) c.focus({ preventScroll: true }); }
+}
+
+function positionProfile(anchor) {
+  const card = $('#profileCard');
+  if (!card || card.hidden) return;
+  if (_pfSmall()) { card.style.left = ''; card.style.top = ''; return; }   // CSS handles the sheet
+  if (!anchor || !anchor.getBoundingClientRect) return;
+  const r = anchor.getBoundingClientRect();
+  const cw = card.offsetWidth || 300, ch = card.offsetHeight || 240, M = 10;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = r.left, top = r.bottom + 8;
+  if (left + cw > vw - M) left = vw - M - cw;
+  if (left < M) left = M;
+  if (top + ch > vh - M) top = Math.max(M, r.top - 8 - ch);              // flip above the anchor
+  if (top < M) top = M;
+  card.style.left = left + 'px'; card.style.top = top + 'px';
+}
+
+function hideProfile(force) {
+  if (_pf.pinned && !force) return;
+  clearTimeout(_pf.t);
+  _pf.pinned = false; _pf.team = null; _pf.anchor = null;
+  const card = $('#profileCard'), scrim = $('#profileScrim');
+  if (card) card.hidden = true;
+  if (scrim) scrim.hidden = true;
+  document.body.classList.remove('modal-open');
+}
+
 function closeProfile() {
-  const ov = $('#profileOverlay');
-  if (!ov || ov.hidden) return;
-  ov.hidden = true; document.body.classList.remove('modal-open');
+  hideProfile(true);
   if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
 }
 
@@ -1269,14 +1316,50 @@ async function boot() {
   // Open the canonical team profile from any nation marked .profile-link[data-team]
   // (mural nodes, odds rows, group rows, pulse). Delegated so it survives re-renders.
   // rank-cards carry data-team too but NOT .profile-link, so their expand stays intact.
-  const openFromEl = el => { const t = el && el.closest && el.closest('.profile-link[data-team]'); if (t) openProfile(t.getAttribute('data-team')); };
-  document.addEventListener('click', e => openFromEl(e.target));
+  // Profile card wiring: hover-to-preview (fine pointers only) + click/tap-to-pin.
+  // Delegated so it survives every re-render. Rank-cards carry data-team but NOT
+  // .profile-link, so their expand-trajectory behaviour stays intact.
+  const linkOf = el => el && el.closest && el.closest('.profile-link[data-team]');
+  document.addEventListener('click', e => {
+    if (e.target.closest && e.target.closest('#profileCard')) return;          // clicks inside the card
+    const link = linkOf(e.target);
+    if (link) showProfile(link.getAttribute('data-team'), link, true);         // pin on click / tap
+    else if (_pf.pinned) closeProfile();                                       // click-away dismisses
+  });
   document.addEventListener('keydown', e => {
-    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.profile-link[data-team]')) { e.preventDefault(); openFromEl(e.target); }
+    const link = linkOf(e.target);
+    if ((e.key === 'Enter' || e.key === ' ') && link) { e.preventDefault(); showProfile(link.getAttribute('data-team'), link, true); }
     if (e.key === 'Escape') closeProfile();
   });
   $('#profileClose').addEventListener('click', closeProfile);
-  $('#profileOverlay').addEventListener('click', e => { if (e.target === $('#profileOverlay')) closeProfile(); });
+  $('#profileScrim').addEventListener('click', closeProfile);
+
+  if (_pfFine()) {                                   // hover preview never runs on touch
+    document.addEventListener('mouseover', e => {
+      if (_pf.pinned) return;
+      const link = linkOf(e.target);
+      if (!link || (e.target.closest && e.target.closest('#profileCard'))) return;
+      clearTimeout(_pf.t);
+      const team = link.getAttribute('data-team');
+      _pf.t = setTimeout(() => { if (!_pf.pinned) showProfile(team, link, false); }, 120);
+    });
+    document.addEventListener('mouseout', e => {
+      if (_pf.pinned) return;
+      const to = e.relatedTarget;
+      if (to && to.closest && (to.closest('#profileCard') || to.closest('.profile-link[data-team]'))) return;
+      clearTimeout(_pf.t);
+      _pf.t = setTimeout(() => hideProfile(false), 200);
+    });
+    const card = $('#profileCard');
+    card.addEventListener('mouseenter', () => clearTimeout(_pf.t));
+    card.addEventListener('mouseleave', () => { if (!_pf.pinned) { clearTimeout(_pf.t); _pf.t = setTimeout(() => hideProfile(false), 200); } });
+  }
+  window.addEventListener('scroll', () => {
+    if (!_pf.team) return;
+    if (_pf.pinned && !_pfSmall()) positionProfile(_pf.anchor);
+    else if (!_pf.pinned) hideProfile(false);
+  }, { passive: true });
+  window.addEventListener('resize', () => { if (_pf.team) positionProfile(_pf.anchor); });
 
   // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module
   // (loaded separately). The legacy Quantum Tactics Lab renderers further down are
