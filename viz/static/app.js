@@ -35,6 +35,115 @@ function toast(msg) {
   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 2200);
 }
 
+// ----- live-update primitives --------------------------------------------
+// Honour reduced-motion everywhere: tweens/flashes degrade to an instant set.
+const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Formatters a tweened number can render through. The element stores its target
+// underlying value in data-num and the formatter key in data-fmt; the tween
+// walks the underlying value (e.g. a 0–1 probability) and re-formats each frame
+// so a "23.1%" counts up honestly rather than lerping the printed string.
+const FMT = {
+  pct:    v => pct(v, 1),
+  pct0:   v => pct(v, 0),
+  pctint: v => Math.round(v) + '%',     // value already on a 0–100 scale
+  int:    v => Math.round(v).toLocaleString(),
+  g1:     v => v.toFixed(1),
+  g2:     v => v.toFixed(2),
+};
+// Count a number element from its current value to el.dataset.num. No-op (sets
+// straight to target) under reduced-motion or for tiny deltas.
+function tweenNum(el, from) {
+  const to = parseFloat(el.dataset.num);
+  const fmt = FMT[el.dataset.fmt] || FMT.int;
+  if (!isFinite(to)) return;
+  if (from == null || !isFinite(from)) from = to;
+  if (REDUCE_MOTION || Math.abs(to - from) < 1e-9) { el.textContent = fmt(to); return; }
+  const t0 = performance.now(), DUR = 620;
+  cancelAnimationFrame(el._raf || 0);
+  const step = now => {
+    const k = Math.min(1, (now - t0) / DUR);
+    const e = 1 - Math.pow(1 - k, 3);                 // easeOutCubic
+    el.textContent = fmt(from + (to - from) * e);
+    if (k < 1) el._raf = requestAnimationFrame(step);
+  };
+  el._raf = requestAnimationFrame(step);
+}
+// Brief highlight on a value that just changed.
+function flash(el) {
+  if (!el || REDUCE_MOTION) return;
+  el.classList.remove('lv-flash');
+  void el.offsetWidth;                                // restart the animation
+  el.classList.add('lv-flash');
+}
+
+// Keyed in-place update. Repeating rows carry data-mk="<stable key>"; on a
+// refresh we reconcile by key instead of replacing innerHTML wholesale — so the
+// numbers count up (tweenNum), changed rows flash, focus/scroll survive and
+// nothing flickers. Falls back to a plain swap when keys are absent or the set
+// of keys changed wholesale (e.g. a fixture moved from upcoming → results).
+function morph(host, html) {
+  if (!host) return;
+  if (!host.dataset.morph) { host.innerHTML = html; host.dataset.morph = '1'; return; }
+  const tpl = document.createElement('div'); tpl.innerHTML = html;
+  const newRows = [...tpl.children];
+  const keyed = newRows.length && newRows.every(n => n.dataset.mk);
+  const oldKeyed = [...host.children].every(n => n.dataset.mk);
+  if (!keyed || !oldKeyed) { host.innerHTML = html; return; }
+  const oldMap = new Map([...host.children].map(n => [n.dataset.mk, n]));
+  const newKeys = new Set(newRows.map(n => n.dataset.mk));
+  // drop rows that no longer exist
+  for (const [k, n] of oldMap) if (!newKeys.has(k)) n.remove();
+  let prev = null;
+  for (const nn of newRows) {
+    const k = nn.dataset.mk, old = oldMap.get(k);
+    if (old) { morphRow(old, nn); place(host, old, prev); prev = old; }
+    else { nn.classList.add('lv-enter'); place(host, nn, prev); prev = nn; }
+  }
+}
+function place(host, node, prev) {
+  const ref = prev ? prev.nextSibling : host.firstChild;
+  if (node !== ref) host.insertBefore(node, ref);
+}
+// Reconcile one surviving row: capture old underlying values, adopt the new
+// markup (labels/bars/classes), then tween each number from its old value and
+// flash the row if anything actually changed.
+function morphRow(oldEl, newEl) {
+  if (oldEl.isEqualNode(newEl)) return;
+  const oldNums = [...oldEl.querySelectorAll('[data-num]')].map(n => parseFloat(n.dataset.num));
+  const wasOpen = oldEl.classList.contains('open');
+  oldEl.innerHTML = newEl.innerHTML;
+  // copy attributes (class/style/aria) but keep an expanded card expanded
+  for (const a of [...oldEl.attributes]) if (!newEl.hasAttribute(a.name)) oldEl.removeAttribute(a.name);
+  for (const a of [...newEl.attributes]) oldEl.setAttribute(a.name, a.value);
+  if (wasOpen) { oldEl.classList.add('open'); oldEl.setAttribute('aria-expanded', 'true'); }
+  [...oldEl.querySelectorAll('[data-num]')].forEach((n, i) => tweenNum(n, oldNums[i]));
+  flash(oldEl);
+}
+const paint = (sel, html) => { const h = $(sel); if (h) morph(h, html); };
+
+// ----- live match state ---------------------------------------------------
+// The engine has no "in-play" flag: a match that has kicked off but isn't
+// scored yet still sits in `upcoming` with a past `kickoff`. We derive the
+// phase on the client. A football match (90' + half-time + stoppage) is treated
+// as live for ~125 min after kickoff; after that an unscored tie is "awaiting"
+// the result feed rather than implied still-playing.
+const LIVE_MS = 125 * 60 * 1000;
+const SOON_MS = 60 * 60 * 1000;
+function matchPhase(m, now = Date.now()) {
+  const ko = m.kickoff ? Date.parse(m.kickoff) : NaN;
+  if (!isFinite(ko)) return { phase: 'pre', ko: NaN };
+  const dt = now - ko;
+  if (dt < 0) return { phase: dt > -SOON_MS ? 'soon' : 'pre', ko, ms: -dt };
+  if (dt < LIVE_MS) return { phase: 'live', ko, ms: dt, minute: Math.max(1, Math.floor(dt / 60000)) };
+  return { phase: 'await', ko, ms: dt };
+}
+// every live fixture from a fixtures payload, soonest kickoff first
+function liveFixtures(fx) {
+  return (fx?.upcoming || []).filter(m => matchPhase(m).phase === 'live')
+    .sort((a, b) => Date.parse(a.kickoff) - Date.parse(b.kickoff));
+}
+
 // ----- shared state -------------------------------------------------------
 const STATE = { meta: null, report: null, static: false };
 
@@ -129,26 +238,26 @@ function renderOdds(rep) {
 
   // podium (top 3)
   const medals = ['①', '②', '③'];
-  $('#podium').innerHTML = odds.slice(0, 3).map((o, i) => `
-    <div class="pod pod-${i + 1}">
+  paint('#podium', odds.slice(0, 3).map((o, i) => `
+    <div class="pod pod-${i + 1}" data-mk="${esc(o.team)}">
       <div class="sticker foil tape">
         <div class="medal">${medals[i]}</div>
         ${flagHTML(o.flag, 'flag', o.team)}
         <div class="pod-team">${esc(o.team)}</div>
-        <div class="pod-win">${pct(o.p_win)}</div>
+        <div class="pod-win"><span data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span></div>
         <div class="pod-sub">final ${pct(o.p_final)} · semi ${pct(o.p_semi)}</div>
       </div>
-    </div>`).join('');
+    </div>`).join(''));
 
   // (The cover no longer reveals the favourite — the winner is the payoff of
   // "The Whole" mural, not a spoiler on the front page.)
 
   // full ranked list
-  $('#oddsList').innerHTML = odds.map((o, i) => {
+  paint('#oddsList', odds.map((o, i) => {
     const w = Math.max(2, (o.p_win / maxWin) * 100);
     const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 24)}px" title="${pct(v)}"></span>`;
     return `
-      <div class="odds-row profile-link" data-team="${esc(o.team)}" role="button" tabindex="0" aria-label="Open ${esc(o.team)} profile">
+      <div class="odds-row profile-link" data-mk="${esc(o.team)}" data-team="${esc(o.team)}" role="button" tabindex="0" aria-label="Open ${esc(o.team)} profile">
         <span class="orank">${i + 1}</span>
         ${flagHTML(o.flag, 'flag-sm', o.team)}
         <div class="obar-wrap">
@@ -159,10 +268,10 @@ function renderOdds(rep) {
           <div class="road" title="QF / SF / Final / Win">
             ${pip(o.p_quarter)}${pip(o.p_semi)}${pip(o.p_final, 'f')}${pip(o.p_win, 'w')}
           </div>
-          <span class="owin">${pct(o.p_win)}</span>
+          <span class="owin" data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span>
         </div>
       </div>`;
-  }).join('');
+  }).join(''));
 }
 
 // =========================================================================
@@ -224,7 +333,7 @@ function renderGroups(g) {
     if (top3 > best) { best = top3; death = k; }
   }
   const rots = [-1, .8, -.6, 1, -.9, .5];
-  $('#groupsGrid').innerHTML = Object.keys(g).sort().map((k, gi) => {
+  paint('#groupsGrid', Object.keys(g).sort().map((k, gi) => {
     const rows = g[k].map((t, i) => `
       <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
         <span class="gpos">${i + 1}</span>
@@ -232,16 +341,16 @@ function renderGroups(g) {
         <span class="gnm">${esc(t.team)}<small>Elo ${Math.round(t.elo)} · ${esc(t.confed)}</small></span>
         <div class="advwrap">
           <div class="advbar"><span style="width:${t.adv}%;background:${t.adv >= 60 ? 'var(--teal)' : t.adv >= 35 ? 'var(--gold)' : 'var(--red)'}"></span></div>
-          <span class="advpct">${t.adv}%</span>
+          <span class="advpct" data-num="${t.adv}" data-fmt="pctint">${t.adv}%</span>
         </div>
       </div>`).join('');
-    return `<div class="group-card" style="--rot:${rots[gi % rots.length]}deg">
+    return `<div class="group-card" data-mk="${esc(k)}" style="--rot:${rots[gi % rots.length]}deg">
       <div class="gc-head">
         <span class="gname">Group ${k}</span>
         ${k === death ? '<span class="gtag death">💀 Group of Death</span>'
                       : '<span class="gtag">Adv%</span>'}
       </div>${rows}</div>`;
-  }).join('');
+  }).join(''));
 }
 
 // =========================================================================
@@ -452,8 +561,25 @@ function mcSide(card, side, isFav, isWin) {
   const fl = flagHTML(card.flag, 'flag-sm', card.team);
   return `<div class="${cls}">${side === 'home' ? fl + nm + elo : elo + nm + fl}</div>`;
 }
+// The "when" cell for an upcoming tie: a pulsing LIVE clock once it has kicked
+// off (minute ticked by the live ticker), an "● kicks off soon" flag in the last
+// hour, an "awaiting result" note once it's run long past kickoff, else the
+// localised kickoff time.
+function mcWhen(m) {
+  const ph = matchPhase(m);
+  if (ph.phase === 'live')
+    return `<div class="mc-kick mc-live"><span class="livedot"></span>LIVE <b data-live-start="${esc(m.kickoff)}">${ph.minute}'</b></div>`;
+  if (ph.phase === 'await')
+    return `<div class="mc-kick mc-await">FT? <small>awaiting result</small></div>`;
+  const k = fmtKick(m.kickoff);
+  if (ph.phase === 'soon' && k)
+    return `<div class="mc-kick mc-soon"><span class="livedot"></span>${k.time}<small>${esc(k.tz)}</small></div>`;
+  return k ? `<div class="mc-kick">${k.time}<small>${esc(k.tz)}</small></div>` : '';
+}
+
 function mcCard(m, done) {
   const favHome = m.fav === 'home', favAway = m.fav === 'away';
+  const mk = `data-mk="${esc(m.home.team)}|${esc(m.away.team)}"`;
   let mid;
   if (done) {
     const winH = m.actual === 'home', winA = m.actual === 'away';
@@ -465,20 +591,20 @@ function mcCard(m, done) {
         ${stamp}
         <div class="mc-line">model: ${wdwLabel(m)}</div>
       </div>`;
-    return `<div class="mc-card done">
+    return `<div class="mc-card done" ${mk}>
         <div class="mc-date">${fmtDate(m.date)}</div>
         ${mcSide(m.home, 'home', favHome, winH ? true : winA ? false : null)}
         ${mid}
         ${mcSide(m.away, 'away', favAway, winA ? true : winH ? false : null)}
       </div>`;
   }
-  const k = fmtKick(m.kickoff);
+  const phase = matchPhase(m).phase;                         // pre · soon · live · await
   mid = `<div class="mc-mid">
-      ${k ? `<div class="mc-kick">${k.time}<small>${esc(k.tz)}</small></div>` : ''}
+      ${mcWhen(m)}
       ${wdwBar(m.p_home, m.p_draw, m.p_away, m.fav)}
       <div class="mc-line">xG ${m.exp_home_goals.toFixed(1)}–${m.exp_away_goals.toFixed(1)} · likely <b>${esc(m.top_scoreline)}</b>${m.neutral ? '' : ' · home adv'}</div>
     </div>`;
-  return `<div class="mc-card">
+  return `<div class="mc-card ${phase === 'live' ? 'is-live' : phase === 'soon' ? 'is-soon' : ''}" ${mk}>
       <div class="mc-date">${fmtDate(m.date)}</div>
       ${mcSide(m.home, 'home', favHome)}
       ${mid}
@@ -503,8 +629,9 @@ function renderFixtures(data) {
   }
   $('#mcTabDone').textContent = `Results${rec.played ? ' (' + rec.played + ')' : ''}`;
   $('#mcTabUp').textContent = `Upcoming${data.upcoming?.length ? ' (' + data.upcoming.length + ')' : ''}`;
-  // default to results once any exist, else upcoming
-  if (!STATE.mcTab) STATE.mcTab = (rec.played ? 'completed' : 'upcoming');
+  // default to results once any exist, else upcoming — but while a match is in
+  // play, open on Upcoming so the live action is front-and-centre.
+  if (!STATE.mcTab) STATE.mcTab = liveFixtures(data).length ? 'upcoming' : (rec.played ? 'completed' : 'upcoming');
   paintFixtures();
 }
 function paintFixtures() {
@@ -515,26 +642,40 @@ function paintFixtures() {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
+  const completedTab = tab === 'completed';
+  // Any match that has kicked off but isn't scored yet is pinned to the top of
+  // the list under a LIVE banner — shown on EITHER tab so a match in play is
+  // never hidden — and pulled out of the day grouping so it never shows twice.
+  const live = liveFixtures(data);
+  const liveSet = new Set(live.map(m => m.home.team + '|' + m.away.team));
   // Upcoming reads forward in time; Results reads backward (latest at the top —
   // with 104 matches over five weeks nobody scrolls for last night's score).
-  const list = [...((tab === 'completed' ? data.completed : data.upcoming) || [])]
-    .sort((a, b) => tab === 'completed' ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
-  if (!list.length) {
-    $('#mcList').innerHTML = `<p class="loading">${tab === 'completed'
+  const base = [...((completedTab ? data.completed : data.upcoming) || [])]
+    .filter(m => !liveSet.has(m.home.team + '|' + m.away.team))
+    .sort((a, b) => completedTab ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
+
+  if (!base.length && !live.length) {
+    $('#mcList').innerHTML = `<p class="loading">${completedTab
       ? 'No results yet — the tournament hasn\'t kicked off. Check back from ' + fmtDate(data.kickoff) + '.'
       : 'No upcoming fixtures scheduled.'}</p>`;
     return;
   }
+  let html = '';
+  if (live.length) {
+    html += `<div class="mc-day mc-day-live"><span class="livedot"></span>LIVE NOW · ${live.length} match${live.length > 1 ? 'es' : ''} underway</div>`;
+    html += live.map(m => mcCard(m, false)).join('');
+  }
   // group by the viewer's LOCAL day (a late kickoff can fall on a different
   // calendar day depending where in the world you are), with a day header
-  let html = '', day = null;
-  for (const m of list) {
+  let day = null;
+  for (const m of base) {
     const k = fmtKick(m.kickoff);
     const label = k ? k.day : fmtDate(m.date);
     if (label !== day) { day = label; html += `<div class="mc-day">${label}</div>`; }
-    html += mcCard(m, tab === 'completed');
+    html += mcCard(m, completedTab);
   }
   $('#mcList').innerHTML = html;
+  syncLivePill();
 }
 
 // =========================================================================
@@ -774,20 +915,33 @@ async function renderWhole() {
 
 function muralPulse(fx) {
   const rec = fx.record || {};
-  const up = (fx.upcoming || []).find(m => m.kickoff) || (fx.upcoming || [])[0];
+  const live = liveFixtures(fx);
+  const liveSet = new Set(live.map(m => m.home.team + '|' + m.away.team));
+  const up = (fx.upcoming || []).filter(m => !liveSet.has(m.home.team + '|' + m.away.team))
+              .find(m => m.kickoff) || (fx.upcoming || [])[0];
   const last = (fx.completed || [])[0];
   const ko = up && up.kickoff ? `<span class="pulse-cd" data-ko="${esc(up.kickoff)}">--:--:--</span>` : '';
   const lastHTML = last
     ? `${flagHTML(last.home.flag, 'flag-xs', last.home.team)}<b>${last.home_score}–${last.away_score}</b>${flagHTML(last.away.flag, 'flag-xs', last.away.team)} ${last.called ? '<span class="ok">✓</span>' : '<span class="miss">✗</span>'}`
     : 'the cup begins 11 June';
-  const nextHTML = up
-    ? `<span class="profile-link" data-team="${esc(up.home.team)}">${flagHTML(up.home.flag, 'flag-xs', up.home.team)}${esc(up.home.team)}</span> v <span class="profile-link" data-team="${esc(up.away.team)}">${esc(up.away.team)}${flagHTML(up.away.flag, 'flag-xs', up.away.team)}</span> ${ko}`
-    : '—';
+  // Middle cell: LIVE while a match is underway, otherwise the next countdown.
+  let midK, midV;
+  if (live.length) {
+    const lm = live[0], extra = live.length > 1 ? ` <span class="pulse-more">+${live.length - 1}</span>` : '';
+    midK = 'LIVE';
+    midV = `<span class="profile-link" data-team="${esc(lm.home.team)}">${flagHTML(lm.home.flag, 'flag-xs', lm.home.team)}${esc(lm.home.team)}</span> v <span class="profile-link" data-team="${esc(lm.away.team)}">${esc(lm.away.team)}${flagHTML(lm.away.flag, 'flag-xs', lm.away.team)}</span> <span class="pulse-min"><span class="livedot"></span><b data-live-start="${esc(lm.kickoff)}">${matchPhase(lm).minute}'</b></span>${extra}`;
+  } else {
+    midK = 'NEXT';
+    midV = up
+      ? `<span class="profile-link" data-team="${esc(up.home.team)}">${flagHTML(up.home.flag, 'flag-xs', up.home.team)}${esc(up.home.team)}</span> v <span class="profile-link" data-team="${esc(up.away.team)}">${esc(up.away.team)}${flagHTML(up.away.flag, 'flag-xs', up.away.team)}</span> ${ko}`
+      : '—';
+  }
   const recHTML = rec.played ? `called <b>${rec.called}/${rec.played}</b> · ${pct(rec.pct)}` : 'record opens at kick-off';
   $('#muralPulse').innerHTML =
     `<div class="pulse-cell"><span class="pulse-k">LAST</span><span class="pulse-v">${lastHTML}</span></div>` +
-    `<div class="pulse-cell"><span class="pulse-k">NEXT</span><span class="pulse-v">${nextHTML}</span></div>` +
+    `<div class="pulse-cell${live.length ? ' pulse-live' : ''}"><span class="pulse-k">${midK}</span><span class="pulse-v">${midV}</span></div>` +
     `<div class="pulse-cell"><span class="pulse-k">MODEL</span><span class="pulse-v">${recHTML}</span></div>`;
+  syncLivePill();
 }
 
 function muralGroups(g) {
@@ -808,9 +962,20 @@ function buildRiverSVG(bracket) {
   if (!bracket || bracket.error || !bracket.r32) return '<p class="loading">bracket forming…</p>';
   const wc = t => (t.winner === t.a.team ? t.a : t.b);          // the advancing (chalk/real) side
   const R = bracket.rounds || {};
+  // The two finalists are the SF winners. The wallchart advances the head-to-head
+  // favourite each tie, which can crown the higher-Elo finalist even when the OTHER
+  // finalist is the model's title favourite (wins the cup more often across the sims).
+  // The altar beside this river ranks teams by exactly those title odds, so we crown
+  // the funnel by the same yardstick — the finalist with the higher title probability
+  // — keeping the mural internally consistent. Falls back to the bracket's own
+  // champion until the final is formed.
+  const finalists = (R.sf || []).map(wc).filter(c => c && c.team);
+  const championCard = finalists.length === 2
+    ? ((finalists[0].p_win ?? -1) >= (finalists[1].p_win ?? -1) ? finalists[0] : finalists[1])
+    : (bracket.champion || {});
   const cols = [bracket.r32.map(wc), (R.r16 || []).map(wc), (R.qf || []).map(wc),
-                (R.sf || []).map(wc), [bracket.champion || {}]];
-  const champ = bracket.champion && bracket.champion.team;
+                (R.sf || []).map(wc), [championCard]];
+  const champ = championCard && championCard.team;
   const W = 300, H = 540, padX = 18, ys = [40, 158, 268, 366, 452];
   const xOf = (i, n) => padX + ((i + 0.5) / n) * (W - 2 * padX);
   let currents = '', nodes = '';
@@ -836,12 +1001,12 @@ function buildRiverSVG(bracket) {
     });
     nodes += `<text x="5" y="${ys[c] + 3}" font-size="9" fill="var(--ink-soft)" class="river-lbl">${labels[c]}</text>`;
   });
-  const cn = esc((bracket.champion && bracket.champion.team) || '');
+  const cn = esc(championCard.team || '');
   return `<div class="mural-h">32 → 1 · the river</div>
     <svg viewBox="0 0 ${W} ${H}" class="river-svg" role="img" aria-label="Knockout funnel to ${cn}">
       ${currents}${nodes}
       <text x="${W / 2}" y="${H - 34}" text-anchor="middle" class="river-champ">${cn}</text>
-      <text x="${W / 2}" y="${H - 18}" text-anchor="middle" class="river-sub">PROJECTED CHAMPION · ${pct(bracket.champion && bracket.champion.p_win)}</text>
+      <text x="${W / 2}" y="${H - 18}" text-anchor="middle" class="river-sub">PROJECTED CHAMPION · ${pct(championCard.p_win)}</text>
     </svg>`;
 }
 
@@ -850,22 +1015,32 @@ function muralAltar(rep) {
   if (!odds.length) { $('#muralAltar').innerHTML = ''; return; }
   const champ = odds[0];
   const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 22)}px" title="${pct(v)}"></span>`;
-  $('#muralAltar').innerHTML = `
-    <div class="mural-h">the answer</div>
-    <div class="altar-champ profile-link sticker foil" data-team="${esc(champ.team)}">
-      <div class="altar-k">THE MODEL CROWNS</div>
-      ${flagHTML(champ.flag, 'flag', champ.team)}
-      <div class="altar-nm">${esc(champ.team)}</div>
-      <div class="altar-win">${pct(champ.p_win)}</div>
-      <div class="altar-sub">to lift the trophy</div>
-    </div>
-    <div class="altar-list">
-      ${odds.slice(0, 6).map((o, i) => `<div class="altar-row profile-link" data-team="${esc(o.team)}">
+  // Champion block + ranked list. The block is rebuilt only when the crowned
+  // nation actually changes; otherwise we tween its % so a re-sim nudge reads as
+  // a live tick rather than a full repaint. The list always morphs by team key.
+  const host = $('#muralAltar'); if (!host) return;
+  const champBlock = host.querySelector('.altar-champ');
+  if (!champBlock || champBlock.dataset.team !== champ.team) {
+    host.innerHTML = `
+      <div class="mural-h">the answer</div>
+      <div class="altar-champ profile-link sticker foil" data-team="${esc(champ.team)}">
+        <div class="altar-k">THE MODEL CROWNS</div>
+        ${flagHTML(champ.flag, 'flag', champ.team)}
+        <div class="altar-nm">${esc(champ.team)}</div>
+        <div class="altar-win"><span data-num="${champ.p_win}" data-fmt="pct">${pct(champ.p_win)}</span></div>
+        <div class="altar-sub">to lift the trophy</div>
+      </div>
+      <div class="altar-list"></div>`;
+  } else {
+    const w = champBlock.querySelector('.altar-win span');
+    if (w) { const from = parseFloat(w.dataset.num); w.dataset.num = champ.p_win; tweenNum(w, from); flash(w); }
+  }
+  paint('#muralAltar .altar-list', odds.slice(0, 6).map((o, i) =>
+    `<div class="altar-row profile-link" data-mk="${esc(o.team)}" data-team="${esc(o.team)}">
         <span class="ar-rank">${i + 1}</span>${flagHTML(o.flag, 'flag-xs', o.team)}
         <span class="ar-nm">${esc(o.team)}</span>
         <span class="road" title="QF · SF · Final · Win">${pip(o.p_quarter)}${pip(o.p_semi)}${pip(o.p_final, 'f')}${pip(o.p_win, 'w')}</span>
-        <span class="ar-win">${pct(o.p_win)}</span></div>`).join('')}
-    </div>`;
+        <span class="ar-win" data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span></div>`).join(''));
 }
 
 function muralIntel(news) {
@@ -877,19 +1052,48 @@ function muralIntel(news) {
   }).join('<span class="marg-dot">•</span>');
 }
 
-function startMuralClock() {
-  clearInterval(startMuralClock._t);
+function startMuralClock() { startLiveTicker(); }   // legacy alias
+
+// One global per-second heartbeat for everything time-sensitive on the page:
+//  · [data-ko]          — countdowns to the next kickoff (mural pulse)
+//  · [data-live-start]  — elapsed minute of a match in play (mc cards, pulse)
+//  · the topbar LIVE pill state
+// It runs for the life of the page (this is a live dashboard) but does almost
+// nothing when there's no live/imminent match on screen.
+function startLiveTicker() {
+  if (startLiveTicker._t) return;                  // single shared interval
+  const p = n => String(n).padStart(2, '0');
   const tick = () => {
-    const el = document.querySelector('.pulse-cd[data-ko]');
-    if (!el) { clearInterval(startMuralClock._t); return; }
-    let s = Math.max(0, Math.floor((new Date(el.getAttribute('data-ko')).getTime() - Date.now()) / 1000));
-    if (s <= 0) { el.textContent = 'KICK-OFF'; return; }
-    const d = Math.floor(s / 86400); s %= 86400;
-    const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60), ss = s % 60;
-    const p = n => String(n).padStart(2, '0');
-    el.textContent = (d ? `${d}d ` : '') + `${p(h)}:${p(m)}:${p(ss)}`;
+    const now = Date.now();
+    document.querySelectorAll('.pulse-cd[data-ko]').forEach(el => {
+      let s = Math.max(0, Math.floor((Date.parse(el.getAttribute('data-ko')) - now) / 1000));
+      if (s <= 0) { el.textContent = 'KICK-OFF'; return; }
+      const d = Math.floor(s / 86400); s %= 86400;
+      const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60), ss = s % 60;
+      el.textContent = (d ? `${d}d ` : '') + `${p(h)}:${p(m)}:${p(ss)}`;
+    });
+    document.querySelectorAll('[data-live-start]').forEach(el => {
+      const mins = Math.floor((now - Date.parse(el.getAttribute('data-live-start'))) / 60000);
+      el.textContent = (mins >= 0 ? Math.max(1, mins) : 0) + "'";
+    });
+    syncLivePill();
   };
-  tick(); startMuralClock._t = setInterval(tick, 1000);
+  tick(); startLiveTicker._t = setInterval(tick, 1000);
+}
+
+// Reflect real live state in the topbar pill: idle = "LIVE" reload affordance,
+// active = "● LIVE n" with the underway-match count. Cached so we only touch the
+// DOM when the count changes.
+function syncLivePill() {
+  const pill = $('#livePill'); if (!pill) return;
+  const n = STATE.fixtures ? liveFixtures(STATE.fixtures).length : 0;
+  if (syncLivePill._n === n) return;
+  syncLivePill._n = n;
+  pill.classList.toggle('is-live', n > 0);
+  pill.innerHTML = `<span class="dot"></span> LIVE${n > 0 ? ' · ' + n : ''}`;
+  pill.title = n > 0
+    ? `${n} match${n > 1 ? 'es' : ''} in play — click to pull the latest model output`
+    : 'Reload the latest model output';
 }
 
 // =========================================================================
@@ -902,7 +1106,7 @@ async function openProfile(team) {
   _lastFocus = document.activeElement;
   body.innerHTML = '<p class="loading">opening profile…</p>';
   ov.hidden = false; document.body.classList.add('modal-open');
-  $('#profileClose').focus();
+  $('#profileClose').focus({ preventScroll: true });
   let d; try { d = await ensureData(); } catch (e) { d = { fixtures: {}, news: {}, media: {} }; }
   const f = _field(team);
   const odds = ((STATE.report && STATE.report.title_odds) || []).find(o => o.team === team) || {};
@@ -957,6 +1161,59 @@ function closeProfile() {
   if (!ov || ov.hidden) return;
   ov.hidden = true; document.body.classList.remove('modal-open');
   if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+}
+
+// =========================================================================
+//  LIVE AUTO-REFRESH  —  the heartbeat behind live match states + smooth updates
+//  Re-pulls the volatile feeds in the background and lets the render functions
+//  morph the changed numbers in place (no full-page reload, no scroll jump). The
+//  cadence adapts: brisk while a match is live or about to start, relaxed
+//  otherwise. Pauses while the tab is hidden and catches up on return.
+// =========================================================================
+async function refreshFeeds() {
+  const get = (k, url, fb) => API(url).then(r => (STATE[k] = r)).catch(() => (STATE[k] ?? fb));
+  const [report, fixtures, groupadv, bracket, news] = await Promise.all([
+    get('report', '/api/report.json', {}), get('fixtures', '/api/fixtures.json', {}),
+    get('groupadv', '/api/groupadv.json', {}), get('bracket', '/api/bracket.json', {}),
+    get('news', '/api/news.json', {}),
+  ]);
+  return { report, fixtures, groupadv, bracket, news };
+}
+async function softRefresh(announce) {
+  let d; try { d = await refreshFeeds(); } catch (e) { return; }
+  renderOdds(d.report);
+  renderFixtures(d.fixtures);
+  renderGroups(d.groupadv);
+  renderBracket(d.bracket);
+  // don't stomp an active Intel filter — only repaint the clippings when showing all
+  if (!$('#intelTeam')?.value) renderNews(d.news);
+  // update the mural in place (no _WHOLE teardown → no flash, scroll preserved)
+  muralPulse(d.fixtures); muralGroups(d.groupadv);
+  const river = $('#muralRiver'); if (river) river.innerHTML = buildRiverSVG(d.bracket);
+  muralAltar(d.report); muralIntel(d.news);
+  const l = $('#muralLoading'); if (l) l.hidden = true;
+  // keep the shared cache (used by team profiles) pointing at the fresh feeds
+  _WHOLE = Promise.resolve({ report: STATE.report, groupadv: STATE.groupadv,
+    bracket: STATE.bracket, fixtures: STATE.fixtures, news: STATE.news, media: STATE.media || {} });
+  if (announce) toast('album refreshed ⚽');
+}
+function nextRefreshDelay() {
+  const fx = STATE.fixtures;
+  if (fx) {
+    if (liveFixtures(fx).length) return 45000;                       // 45s while a match is live
+    const soon = (fx.upcoming || []).some(m => {
+      const ph = matchPhase(m); return ph.phase === 'soon' && ph.ms < 15 * 60000;
+    });
+    if (soon) return 60000;                                          // 1 min near a kickoff
+  }
+  return 300000;                                                     // 5 min otherwise
+}
+function scheduleRefresh() {
+  clearTimeout(scheduleRefresh._t);
+  scheduleRefresh._t = setTimeout(async () => {
+    if (!document.hidden) await softRefresh(false);
+    scheduleRefresh();
+  }, nextRefreshDelay());
 }
 
 async function boot() {
@@ -1060,17 +1317,24 @@ async function boot() {
     }
   });
 
-  // live refresh
+  // manual refresh — same smooth in-place path as the auto-poll, plus the
+  // rankings + meta which don't ride the live loop. Re-arms the adaptive timer.
   $('#livePill').addEventListener('click', async () => {
     toast('pulling the latest model output…');
-    safe(renderOdds, '/api/report.json'); safe(renderFixtures, '/api/fixtures.json');
-    safe(renderBracket, '/api/bracket.json');
-    safe(renderGroups, '/api/groupadv.json'); safe(renderRankings, '/api/rankings.json');
-    safe(renderNews, '/api/news.json');
-    STATE.report = null; _WHOLE = null; renderWhole();      // rebuild the mural from fresh feeds
+    await softRefresh(false);
+    safe(renderRankings, '/api/rankings.json');
     const meta = await API('/api/meta.json').catch(() => null);
     if (meta) { renderMeta(meta); renderMethod(meta); }
-    setTimeout(() => toast('album refreshed ⚽'), 600);
+    scheduleRefresh();
+    setTimeout(() => toast('album refreshed ⚽'), 500);
+  });
+
+  // start the per-second clock for live minutes / countdowns + the adaptive
+  // background refresh, and catch up immediately whenever the tab regains focus.
+  startLiveTicker();
+  scheduleRefresh();
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { softRefresh(false); scheduleRefresh(); }
   });
 
   // ?solo=<section> renders just one page (used for single-section captures /
