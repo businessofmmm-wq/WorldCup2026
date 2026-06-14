@@ -72,7 +72,7 @@ CSP = (
     "img-src 'self' https://flagcdn.com data:; "
     "style-src 'self' 'unsafe-inline'; "
     "font-src 'self'; "
-    "script-src 'self'; "
+    "script-src 'self' https://cdnjs.cloudflare.com; "
     "connect-src 'self'; "
     "base-uri 'none'; "
     "frame-ancestors 'none'; "
