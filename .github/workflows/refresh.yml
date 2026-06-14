@@ -1,0 +1,54 @@
+name: WCPA live refresh
+
+# Light, frequent pipeline for fast updates after results land.
+# Cloud equivalent of `python run.py refresh`: ingest live + news, retrain, light
+# re-sim (REFRESH_RUNS=1500, antithetic), export, deploy.
+#  - Assumes the database is already populated — run the "WCPA full deploy" workflow
+#    once first to bootstrap a cold DB. The health guard below fails fast otherwise.
+#
+# Cron is UTC. Default is every 30 min; tighten to e.g. '*/10 * * * *' on match days.
+# On a PRIVATE repo a 24/7 fast cron will exceed free Actions minutes — make the repo
+# public (unlimited) or only tighten during match windows. See CLOUD-MIGRATION-SCOPE.md.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'      # every 30 minutes
+  workflow_dispatch: {}          # manual trigger
+
+concurrency:
+  group: wcpa-deploy
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      WORLDCUP_DATABASE_URL: ${{ secrets.WORLDCUP_DATABASE_URL }}
+      CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Python deps
+        run: pip install -r requirements.txt
+
+      - name: Guard — DB must already be populated (run full deploy first)
+        run: python run.py health
+
+      - name: Live refresh (ingest live+news -> retrain -> light re-sim)
+        run: python run.py refresh
+
+      - name: Export static site to ./dist
+        run: python run.py export dist
+
+      - name: Deploy ./dist to Cloudflare Pages
+        run: npx --yes wrangler@4 pages deploy --project-name=wcpa --branch=main --commit-dirty=true
