@@ -1179,3 +1179,35 @@ body.modal-open { overflow: hidden; }
   .river-svg { max-width: 340px; margin: 0 auto; }
   .marginalia { margin-top: 6px; }
 }
+
+
+/* =====================================================================
+   iPHONE / SAFE-AREA POLISH — notch + home-indicator insets, taller
+   wrapped-topbar offsets, tighter ratios on small phones.
+   (Pairs with viewport-fit=cover in index.html.)
+   ===================================================================== */
+.topbar {
+  padding-top: max(9px, env(safe-area-inset-top));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
+}
+.foot { padding-bottom: max(26px, env(safe-area-inset-bottom)); }
+
+@media (max-width: 720px) {
+  /* the album-index wraps to its own row, so the sticky topbar is ~2 rows tall —
+     anchored sections and the sticky Match-Centre tabs need a bigger offset */
+  .page, .cover { scroll-margin-top: 116px; }
+  .mc-tabs { top: 104px; }
+  .album-index a { padding: 9px 12px; }              /* >=40px tap target */
+  .page { padding-left: max(22px, env(safe-area-inset-left));
+          padding-right: max(22px, env(safe-area-inset-right)); }
+}
+@media (max-width: 400px) {
+  .page { padding: 56px 15px 26px; }
+  .cover-stamps { gap: 8px; }
+  .stamp { flex: 1 1 42%; }                           /* 2-up, no cramped wrap */
+  .pulse-cell { min-width: 100%; }                    /* one stat per row */
+}
+@media (max-width: 560px) {
+  .pf-card { padding-bottom: max(6px, env(safe-area-inset-bottom)); }
+}

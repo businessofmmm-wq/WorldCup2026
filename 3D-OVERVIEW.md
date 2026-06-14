@@ -106,3 +106,22 @@ Pitch/Teal #2ea88a · Accents #c1272d / #1e4db7 · Foil ['#d9c7ff','#9fe7d0','#f
 Motion kit: write-the-future path · bloom glow · particle/gold dust · speed-ramp fly-in ·
 podium reveal + count-up odds · foil shimmer · waving flags.
 Type: Anton/Bungee (heavy condensed, kinetic) — already self-hosted on the site.
+
+## 9. Scaffold shipped (this session)
+- `viz/static/overview3d.js` — the feature module exists: an ES module that derives
+  the cascade from REAL feeds (`groupadv` groups, `bracket` round winners, `report`
+  title_odds, `fixtures` results for Reality mode), builds real flag textures (flagcdn
+  via TextureLoader, confederation-colour fallback on CORS/load error), free-roam camera,
+  stage rail + mode toggle, active-stage-only clicks → `onPick(team, anchor)`.
+- It is **opt-in and self-guarding** (`overview3DAvailable()` checks WebGL + window.THREE)
+  and is **not referenced by index.html**, so it cannot affect the live page yet.
+- To activate: host Three.js (self-host or CSP-allow cdnjs), add the two `<script>` tags,
+  then in `boot()` call `initOverview3D(muralMountEl, {groupadv,report,bracket,fixtures},
+  (team,el)=>showProfile(team,el,true))` behind WebGL/reduced-motion checks, keeping the
+  2D mural as fallback. Open item: confirm flagcdn CORS for WebGL textures (else proxy / atlas).
+
+## 10. iPhone formatting (this session)
+- `index.html`: `viewport-fit=cover`. `style.css`: safe-area insets on topbar/footer/profile
+  sheet; bumped scroll-margin-top (116px) + sticky `.mc-tabs` top (104px) for the taller
+  wrapped mobile topbar; ≥40px nav tap targets; ≤400px tightening (page padding, stamps 2-up,
+  one stat per pulse row).
