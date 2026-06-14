@@ -91,7 +91,7 @@ accessible **2D precise view** always one click away.
   no-third-party CSP philosophy; ~170 KB) **or** allow `cdnjs` in CSP (`script-src`). Lean self-host.
   If self-host: drop `three.min.js` into `viz/static/`, load via `<script>`, no CSP change.
   If CDN: update CSP in `viz/export.py` `_cdn_config` (the `_headers`) **and** `viz/server.py`.
-- Verify (jsdom smoke for data wiring + the 2D fallback path) → ship via the unified **`deploy.bat`**
+- Verify (jsdom smoke for data wiring + the 2D fallback path) → ship via the unified **`python manage.py deploy`**
   (export → verify → push). Same flag-cdn img-src already allowed.
 
 ## 7. Open decisions for Sam (answer next session)
@@ -141,7 +141,7 @@ Type: Anton/Bungee (heavy condensed, kinetic) — already self-hosted on the sit
   dispose on teardown.
 - **Phase 4 — promote to default:** 3D becomes the default Overview on capable devices with
   automatic mural fallback (no-WebGL / reduced-motion / low-power); a11y (keyboard stage nav,
-  static first frame under reduced-motion); ship via `deploy.bat`.
+  static first frame under reduced-motion); ship via `python manage.py deploy`.
 
 
 ## 12. Phases 3 & 4 shipped (this session) + CDN decision

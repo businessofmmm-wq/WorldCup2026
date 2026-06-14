@@ -1,5 +1,6 @@
 @echo off
-REM  WCPA maintenance terminal - double-click to open the console
+REM  WCPA control window - run EVERYTHING from here (status, refresh, deploy,
+REM  watch, pipeline, dashboard). Double-click to open the menu.
 cd /d %~dp0
 python manage.py %*
 pause

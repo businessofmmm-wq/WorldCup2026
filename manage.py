@@ -10,9 +10,10 @@ watch loop. Stdlib-only (no extra deps) — it just drives the existing
 `run.py` engine and the deploy scripts.
 
     python manage.py            # open the menu
-    python manage.py status     # one-shot status, then exit
-    python manage.py refresh     # one-shot local refresh, then exit
-    python manage.py deploy      # one-shot full refresh + deploy, then exit
+    python manage.py status         # one-shot status, then exit
+    python manage.py refresh        # one-shot local refresh, then exit
+    python manage.py deploy [full]  # one-shot deploy (export->verify->push);
+                                    #   add 'full' to ingest live + retrain + re-sim first
 """
 from __future__ import annotations
 import json
@@ -215,7 +216,7 @@ def action_refresh():
 
 
 def _deploy_cmd():
-    # mirror the hardened invocation in deploy*.bat (pinned wrangler, never stalls)
+    # pinned wrangler@4, --yes so a fresh release can never stall on an install prompt
     return ["npx", "--yes", "wrangler@4", "pages", "deploy",
             "--project-name=wcpa", "--branch=main", "--commit-dirty=true"]
 
@@ -242,12 +243,13 @@ def _export_verified():
     return True
 
 
-def action_deploy():
+def action_deploy(interactive=True, full=False):
     print(banner("\n  DEPLOY — rebuild ./dist from source, then push to Cloudflare"))
     print(f"  {DIM}Always re-exports + re-stamps so CSS/JS/data ship together (never stale).{RST}")
-    full = confirm("  Refresh live data first (ingest results+news · retrain · re-sim 50k)? [y/N]")
-    if not confirm("  This publishes to the LIVE site. Continue? [y/N]"):
-        print(warn("  cancelled")); return
+    if interactive:
+        full = confirm("  Refresh live data first (ingest results+news · retrain · re-sim 50k)? [y/N]")
+        if not confirm("  This publishes to the LIVE site. Continue? [y/N]"):
+            print(warn("  cancelled")); return
     if full:
         for args, label in [(["ingest", "live"], "ingest live results"),
                             (["ingest", "news"], "ingest news"),
@@ -390,7 +392,7 @@ def main():
     elif arg == "refresh":
         action_refresh()
     elif arg == "deploy":
-        action_deploy()
+        action_deploy(interactive=False, full=(len(sys.argv) > 2 and sys.argv[2].lower() == "full"))
     elif arg in (None,):
         menu()
     else:
