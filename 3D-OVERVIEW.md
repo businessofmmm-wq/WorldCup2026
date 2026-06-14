@@ -133,7 +133,7 @@ Type: Anton/Bungee (heavy condensed, kinetic) — already self-hosted on the sit
   Zero cost to normal visitors; no CSP change; no third-party hop.
   **Enable test:** drop a `three.min.js` (r128) into `viz/static/`, deploy, visit
   `wcpa26.com/?overview3d=1`.
-- **Phase 2 — parity + UX:** confirm flagcdn CORS for WebGL textures (else proxy via
+- **Phase 2 — parity + UX (IN PROGRESS):** visible 2D<->3D toggle (localStorage-remembered, WebGL-gated) shipped + mural-preserving reversible mount + module teardown (listeners + GPU dispose) + identifiable fallback tiles. Remaining: confirm flagcdn CORS for WebGL textures (else proxy via
   `/media` or ship a sprite atlas); finish `onPick` → profile card; add a visible
   **2D ⇄ 3D toggle** (localStorage-remembered) instead of only the query flag; device QA.
 - **Phase 3 — data-honest viz + perf:** Sankey ribbons between stages (width ∝ P(advance)),

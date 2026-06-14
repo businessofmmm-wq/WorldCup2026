@@ -1418,31 +1418,47 @@ async function boot() {
     if (!document.hidden) { softRefresh(false); scheduleRefresh(); }
   });
 
-  // ---- 3D Overview · Phase 1 (progressive enhancement · opt-in · zero cost by default) ----
-  // ?overview3d=1 loads a SAME-ORIGIN Three.js (drop three.min.js into the site root to
-  // enable; no third-party hop, no CSP change) and renders the 3D cascade over the mural;
-  // the 2D mural stays as the fallback if three.min.js is absent or WebGL/motion is off.
-  if (new URLSearchParams(location.search).get('overview3d') === '1'
-      && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    const cv = document.createElement('canvas');
-    if (cv.getContext('webgl') || cv.getContext('experimental-webgl')) {
-      const s = document.createElement('script');
-      s.src = '/three.min.js';
-      s.onload = async () => {
-        try {
-          const mod = await import('/overview3d.js');
-          if (!mod.overview3DAvailable || !mod.overview3DAvailable()) return;
-          await ensureData();
-          const mount = document.getElementById('mural');
-          if (mount) mod.initOverview3D(mount,
-            { groupadv: STATE.groupadv, report: STATE.report, bracket: STATE.bracket, fixtures: STATE.fixtures },
-            (team) => showProfile(team, document.getElementById('main') || document.body, true));
-        } catch (e) { /* keep the 2D mural */ }
-      };
-      s.onerror = () => { /* no three.min.js hosted yet — mural stays */ };
-      document.head.appendChild(s);
+  // ---- 3D Overview · Phase 2 (visible 2D<->3D toggle · remembered · opt-in) ----
+  // Default stays the 2D mural. The toggle appears only when WebGL is available;
+  // choosing 3D loads SAME-ORIGIN /three.min.js and mounts overview3d.js into its own
+  // container (the mural DOM is preserved), remembered via localStorage. ?overview3d=1 forces 3D.
+  (function setupOverview3D() {
+    const sw = $('#ovSwitch'), b2 = $('#ov2d'), b3 = $('#ov3d');
+    const mural = $('#mural'), mountEl = $('#overview3dMount');
+    if (!sw || !mountEl || !mural || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const probe = document.createElement('canvas');
+    if (!(probe.getContext('webgl') || probe.getContext('experimental-webgl'))) return;  // no WebGL -> 2D only
+    sw.hidden = false;
+    let inst = null, loadingThree = null;
+    const loadThree = () => window.THREE ? Promise.resolve()
+      : (loadingThree || (loadingThree = new Promise((res, rej) => {
+          const s = document.createElement('script'); s.src = '/three.min.js'; s.onload = res; s.onerror = rej;
+          document.head.appendChild(s);
+        })));
+    async function to3D() {
+      try {
+        await loadThree();
+        const mod = await import('/overview3d.js');
+        if (!mod.overview3DAvailable()) throw new Error('no-3d');
+        await ensureData();
+        mountEl.hidden = false; mural.style.display = 'none';
+        inst = mod.initOverview3D(mountEl,
+          { groupadv: STATE.groupadv, report: STATE.report, bracket: STATE.bracket, fixtures: STATE.fixtures },
+          t => showProfile(t, $('#main') || document.body, true));
+        b3.classList.add('on'); b2.classList.remove('on');
+        try { localStorage.setItem('wcpa_ov3d', '1'); } catch (e) {}
+      } catch (e) { to2D(); }   // three.min.js not hosted yet -> stay on the mural
     }
-  }
+    function to2D() {
+      if (inst && inst.destroy) inst.destroy(); inst = null;
+      mountEl.hidden = true; mural.style.display = '';
+      b2.classList.add('on'); b3.classList.remove('on');
+      try { localStorage.setItem('wcpa_ov3d', '0'); } catch (e) {}
+    }
+    b3.addEventListener('click', to3D); b2.addEventListener('click', to2D);
+    let pref = null; try { pref = localStorage.getItem('wcpa_ov3d'); } catch (e) {}
+    if (pref === '1' || new URLSearchParams(location.search).get('overview3d') === '1') to3D();
+  })();
 
   // ?solo=<section> renders just one page (used for single-section captures /
   // shareable crops); otherwise honour a #hash deep-link once content exists.
