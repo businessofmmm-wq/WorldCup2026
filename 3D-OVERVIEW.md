@@ -125,3 +125,20 @@ Type: Anton/Bungee (heavy condensed, kinetic) — already self-hosted on the sit
   sheet; bumped scroll-margin-top (116px) + sticky `.mc-tabs` top (104px) for the taller
   wrapped mobile topbar; ≥40px nav tap targets; ≤400px tightening (page padding, stamps 2-up,
   one stat per pulse row).
+
+## 11. PHASING PLAN (rollout)
+- **Phase 1 — opt-in activation (DONE):** `boot()` hook — `?overview3d=1` loads a
+  same-origin `/three.min.js` and renders the 3D cascade over the mural via
+  `overview3d.js`; the 2D mural is the fallback (absent file / no WebGL / reduced-motion).
+  Zero cost to normal visitors; no CSP change; no third-party hop.
+  **Enable test:** drop a `three.min.js` (r128) into `viz/static/`, deploy, visit
+  `wcpa26.com/?overview3d=1`.
+- **Phase 2 — parity + UX:** confirm flagcdn CORS for WebGL textures (else proxy via
+  `/media` or ship a sprite atlas); finish `onPick` → profile card; add a visible
+  **2D ⇄ 3D toggle** (localStorage-remembered) instead of only the query flag; device QA.
+- **Phase 3 — data-honest viz + perf:** Sankey ribbons between stages (width ∝ P(advance)),
+  node size by title odds; **InstancedMesh + flag texture atlas** (<100 draw calls), LOD,
+  dispose on teardown.
+- **Phase 4 — promote to default:** 3D becomes the default Overview on capable devices with
+  automatic mural fallback (no-WebGL / reduced-motion / low-power); a11y (keyboard stage nav,
+  static first frame under reduced-motion); ship via `deploy.bat`.

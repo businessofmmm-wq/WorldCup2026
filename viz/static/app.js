@@ -1418,6 +1418,32 @@ async function boot() {
     if (!document.hidden) { softRefresh(false); scheduleRefresh(); }
   });
 
+  // ---- 3D Overview · Phase 1 (progressive enhancement · opt-in · zero cost by default) ----
+  // ?overview3d=1 loads a SAME-ORIGIN Three.js (drop three.min.js into the site root to
+  // enable; no third-party hop, no CSP change) and renders the 3D cascade over the mural;
+  // the 2D mural stays as the fallback if three.min.js is absent or WebGL/motion is off.
+  if (new URLSearchParams(location.search).get('overview3d') === '1'
+      && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const cv = document.createElement('canvas');
+    if (cv.getContext('webgl') || cv.getContext('experimental-webgl')) {
+      const s = document.createElement('script');
+      s.src = '/three.min.js';
+      s.onload = async () => {
+        try {
+          const mod = await import('/overview3d.js');
+          if (!mod.overview3DAvailable || !mod.overview3DAvailable()) return;
+          await ensureData();
+          const mount = document.getElementById('mural');
+          if (mount) mod.initOverview3D(mount,
+            { groupadv: STATE.groupadv, report: STATE.report, bracket: STATE.bracket, fixtures: STATE.fixtures },
+            (team) => showProfile(team, document.getElementById('main') || document.body, true));
+        } catch (e) { /* keep the 2D mural */ }
+      };
+      s.onerror = () => { /* no three.min.js hosted yet — mural stays */ };
+      document.head.appendChild(s);
+    }
+  }
+
   // ?solo=<section> renders just one page (used for single-section captures /
   // shareable crops); otherwise honour a #hash deep-link once content exists.
   const solo = new URLSearchParams(location.search).get('solo');
