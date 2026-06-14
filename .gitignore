@@ -22,3 +22,5 @@ data/tactics/
 # YOLO model weights cache:
 *.pt
 yolo*.pt
+*.patch
+*.bundle
