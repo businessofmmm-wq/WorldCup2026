@@ -1222,3 +1222,10 @@ body.modal-open { overflow: hidden; }
   border-radius: 12px; overflow: hidden; background: #0e0c0a; border: 2.5px solid var(--card-edge); }
 .overview3d-mount[hidden] { display: none; }
 @media (max-width: 560px) { .overview3d-mount { height: 66vh; } }
+
+/* ---- group standings: points pill ---- */
+.gpts { font-family: var(--font-badge); font-size: .82rem; color: var(--ink);
+  background: var(--surface-2); border: 1.5px solid var(--card-edge); border-radius: 7px;
+  padding: 2px 7px; min-width: 30px; text-align: center; flex: none; }
+.gpts small { font-family: var(--font-lab); font-size: .52rem; color: var(--ink-soft); margin-left: 2px; }
+@media (max-width: 420px) { .gnm small { display: none; } .gpts { font-size: .76rem; } }
