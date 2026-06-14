@@ -142,3 +142,23 @@ Type: Anton/Bungee (heavy condensed, kinetic) — already self-hosted on the sit
 - **Phase 4 — promote to default:** 3D becomes the default Overview on capable devices with
   automatic mural fallback (no-WebGL / reduced-motion / low-power); a11y (keyboard stage nav,
   static first frame under reduced-motion); ship via `deploy.bat`.
+
+
+## 12. Phases 3 & 4 shipped (this session) + CDN decision
+- **Hosting decision: CDN (cdnjs).** CSP now allows `https://cdnjs.cloudflare.com` in
+  script-src (viz/export.py `_headers`, viz/server.py, dist/_headers); Three.js r128 loads
+  from cdnjs when 3D is chosen. (Self-host still possible later; flip the script src.)
+- **Phase 3 — data-honest viz (done):** Sankey **ribbons** between stages, one merged
+  BufferGeometry (single draw call), width ∝ reach probability (group adv% then the
+  road-to-final probs p_quarter/p_semi/p_final/p_win), champion route in gold; **nodes
+  scaled by title odds**; shared plane geometry (geoCache); pixelRatio capped; full
+  dispose on teardown. (InstancedMesh+atlas left as a future micro-opt; ~111 flag draw
+  calls is fine on modern devices.)
+- **Phase 4 — promote to default (done, safely):** 3D is the **default on capable
+  desktops** (innerWidth>=760 + deviceMemory/hardwareConcurrency ok, not reduced-motion);
+  mobile/small/low-power keep the 2D mural; choice remembered; `?overview3d=0|1` forces it.
+  Safety: the mural is hidden **only after the 3D renders its first frame** (onReady), and
+  any init/render error auto-reverts to the mural (onError) — so default-on can never leave
+  a visitor on a broken Overview. a11y: canvas role/aria + arrow-key stage nav; toggle/rail
+  buttons aria-labelled. **Still unverified from here:** flagcdn CORS for WebGL textures
+  (coded colour-tile fallback if it fails) and on-device render — test post-deploy.

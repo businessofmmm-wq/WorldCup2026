@@ -1420,7 +1420,7 @@ async function boot() {
 
   // ---- 3D Overview · Phase 2 (visible 2D<->3D toggle · remembered · opt-in) ----
   // Default stays the 2D mural. The toggle appears only when WebGL is available;
-  // choosing 3D loads SAME-ORIGIN /three.min.js and mounts overview3d.js into its own
+  // choosing 3D loads Three.js (cdnjs, allowed in CSP) and mounts overview3d.js into its own
   // container (the mural DOM is preserved), remembered via localStorage. ?overview3d=1 forces 3D.
   (function setupOverview3D() {
     const sw = $('#ovSwitch'), b2 = $('#ov2d'), b3 = $('#ov3d');
@@ -1432,7 +1432,7 @@ async function boot() {
     let inst = null, loadingThree = null;
     const loadThree = () => window.THREE ? Promise.resolve()
       : (loadingThree || (loadingThree = new Promise((res, rej) => {
-          const s = document.createElement('script'); s.src = '/three.min.js'; s.onload = res; s.onerror = rej;
+          const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'; s.onload = res; s.onerror = rej;
           document.head.appendChild(s);
         })));
     async function to3D() {
@@ -1441,13 +1441,15 @@ async function boot() {
         const mod = await import('/overview3d.js');
         if (!mod.overview3DAvailable()) throw new Error('no-3d');
         await ensureData();
-        mountEl.hidden = false; mural.style.display = 'none';
+        mountEl.hidden = false;                       // show the canvas; keep the mural until 3D renders a frame
         inst = mod.initOverview3D(mountEl,
           { groupadv: STATE.groupadv, report: STATE.report, bracket: STATE.bracket, fixtures: STATE.fixtures },
-          t => showProfile(t, $('#main') || document.body, true));
-        b3.classList.add('on'); b2.classList.remove('on');
-        try { localStorage.setItem('wcpa_ov3d', '1'); } catch (e) {}
-      } catch (e) { to2D(); }   // three.min.js not hosted yet -> stay on the mural
+          t => showProfile(t, $('#main') || document.body, true),
+          { onReady() { mural.style.display = 'none'; b3.classList.add('on'); b2.classList.remove('on');
+              try { localStorage.setItem('wcpa_ov3d', '1'); } catch (e) {} },
+            onError() { to2D(); } });
+        if (!inst) throw new Error('init-failed');
+      } catch (e) { to2D(); }   // any failure -> the 2D mural stays / returns
     }
     function to2D() {
       if (inst && inst.destroy) inst.destroy(); inst = null;
@@ -1457,7 +1459,15 @@ async function boot() {
     }
     b3.addEventListener('click', to3D); b2.addEventListener('click', to2D);
     let pref = null; try { pref = localStorage.getItem('wcpa_ov3d'); } catch (e) {}
-    if (pref === '1' || new URLSearchParams(location.search).get('overview3d') === '1') to3D();
+    const q = new URLSearchParams(location.search).get('overview3d');
+    // Phase 4: 3D is the default on capable desktops (WebGL + decent specs, not
+    // reduced-motion); mobile / small / low-power keep the 2D mural by default.
+    // The choice is remembered, and ?overview3d=0 / 1 forces it either way.
+    const capable = innerWidth >= 760
+      && !((navigator.deviceMemory && navigator.deviceMemory < 4)
+           || (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4));
+    if (q === '0' || pref === '0') { /* stay on the 2D mural */ }
+    else if (q === '1' || pref === '1' || capable) to3D();
   })();
 
   // ?solo=<section> renders just one page (used for single-section captures /

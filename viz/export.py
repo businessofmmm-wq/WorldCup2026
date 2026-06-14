@@ -178,7 +178,7 @@ def _cdn_config(dist: str) -> None:
   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
   Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=(), interest-cohort=()
   Cross-Origin-Opener-Policy: same-origin
-  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
+  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com https://cdnjs.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
 
 /api/*
   Cache-Control: public, max-age=300, stale-while-revalidate=600
