@@ -1,0 +1,77 @@
+name: WCPA refresh
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: '*/5 * * * *'
+
+concurrency:
+  group: wcpa-deploy
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WORLDCUP_DATABASE_URL: ${{ secrets.WORLDCUP_DATABASE_URL }}
+      CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Gate — match-aware cadence
+        id: gate
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, urllib.request, datetime as dt
+          now = dt.datetime.now(dt.timezone.utc)
+          def get(p):
+              u = "https://wcpa26.com/api/%s?cb=%d" % (p, int(now.timestamp()))
+              with urllib.request.urlopen(u, timeout=20) as r: return json.load(r)
+          def mins(d): return (now - d).total_seconds()/60.0
+          def iso(s):
+              d = dt.datetime.fromisoformat(s.replace("Z","+00:00"))
+              return d if d.tzinfo else d.replace(tzinfo=dt.timezone.utc)
+          kicks = []
+          try:
+              fx = get("fixtures.json")
+              for m in fx.get("upcoming",[]) + fx.get("completed",[]):
+                  if m.get("kickoff"):
+                      try: kicks.append(iso(m["kickoff"]))
+                      except: pass
+          except: pass
+          live    = any(-10 <= mins(k) <= 155 for k in kicks)
+          between = any(-360 <= mins(k) <= 360 for k in kicks)
+          state = "live" if live else ("between" if between else "idle")
+          try:
+              age = mins(iso(get("meta.json")["exported"]))
+          except: age = 9999
+          threshold = {"live":4.5, "between":9.0, "idle":58.0}[state]
+          run = "true" if age >= threshold else "false"
+          print("run=%s" % run); print("state=%s" % state)
+          PY
+      - name: Check out repository
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v5
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Set up Node
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      - name: Install Python deps
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r requirements.txt
+      - name: Live refresh (ingest live+news -> retrain -> light re-sim)
+        if: steps.gate.outputs.run == 'true'
+        run: python run.py refresh
+      - name: Export static site
+        if: steps.gate.outputs.run == 'true'
+        run: python run.py export dist
+      - name: Deploy to Cloudflare Pages
+        if: steps.gate.outputs.run == 'true'
+        run: npx --yes wrangler@4 pages deploy --project-name=wcpa --branch=main --commit-dirty=true
