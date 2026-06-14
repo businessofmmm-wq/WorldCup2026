@@ -1229,3 +1229,15 @@ body.modal-open { overflow: hidden; }
   padding: 2px 7px; min-width: 30px; text-align: center; flex: none; }
 .gpts small { font-family: var(--font-lab); font-size: .52rem; color: var(--ink-soft); margin-left: 2px; }
 @media (max-width: 420px) { .gnm small { display: none; } .gpts { font-size: .76rem; } }
+
+/* ---- Groups: Prediction/Reality toggle + form chips ---- */
+.grp-mode { display: flex; gap: 6px; margin: 4px 0 16px; }
+.grp-btn { font-family: var(--font-lab); letter-spacing: 1px; font-size: .82rem; cursor: pointer;
+  background: var(--surface-2); color: var(--ink-soft); border: 2px solid var(--card-edge);
+  border-radius: 8px; padding: 6px 14px; }
+.grp-btn.on { background: var(--gold); color: #1c1407; border-color: var(--gold); }
+.gform { display: inline-flex; gap: 3px; align-items: center; flex: none; }
+.fc { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.fc-W { background: var(--teal); } .fc-D { background: #8a8374; } .fc-L { background: var(--red); }
+.fc-none { color: var(--ink-soft); font-size: .8rem; }
+.gpos.qual { background: var(--teal); color: #fff; border-radius: 5px; }

@@ -326,51 +326,63 @@ function renderBracket(b) {
 // =========================================================================
 function renderGroups(g) {
   if (g.error) { $('#groupsGrid').innerHTML = `<p class="loading">${esc(g.error)}</p>`; return; }
-  // group standings: points (3/1/0) from completed intra-group matches
-  const tbl = {}, grpOf = {};
+  STATE.groupadv = g;
+  const mode = STATE.groupsMode || 'pred';
+  // standings + recent form from completed intra-group matches (3/1/0)
+  const tbl = {}, grpOf = {}, form = {};
   Object.keys(g).forEach(k => g[k].forEach(t => { grpOf[t.team] = k;
-    tbl[t.team] = { p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0 }; }));
-  ((STATE.fixtures && STATE.fixtures.completed) || []).forEach(m => {
-    const h = m.home.team, a = m.away.team;
-    if (grpOf[h] && grpOf[h] === grpOf[a] && m.home_score != null && m.away_score != null) {
-      const H = tbl[h], A = tbl[a], hs = m.home_score, as = m.away_score;
-      H.p++; A.p++; H.gf += hs; H.ga += as; A.gf += as; A.ga += hs;
-      if (hs > as) { H.w++; A.l++; H.pts += 3; }
-      else if (hs < as) { A.w++; H.l++; A.pts += 3; }
-      else { H.d++; A.d++; H.pts++; A.pts++; }
-    }
-  });
+    tbl[t.team] = { p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0 }; form[t.team] = []; }));
+  ((STATE.fixtures && STATE.fixtures.completed) || []).slice()
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+    .forEach(m => {
+      const h = m.home.team, a = m.away.team;
+      if (grpOf[h] && grpOf[h] === grpOf[a] && m.home_score != null && m.away_score != null) {
+        const H = tbl[h], A = tbl[a], hs = m.home_score, as = m.away_score;
+        H.p++; A.p++; H.gf += hs; H.ga += as; A.gf += as; A.ga += hs;
+        if (hs > as) { H.w++; A.l++; H.pts += 3; form[h].push('W'); form[a].push('L'); }
+        else if (hs < as) { A.w++; H.l++; A.pts += 3; form[h].push('L'); form[a].push('W'); }
+        else { H.d++; A.d++; H.pts++; A.pts++; form[h].push('D'); form[a].push('D'); }
+      }
+    });
   const anyPlayed = Object.values(tbl).some(s => s.p);
-  // toughest group = highest combined Elo of its top three sides
   let death = null, best = -1;
-  for (const k of Object.keys(g)) {
-    const top3 = g[k].slice(0, 3).reduce((s, t) => s + (t.elo || 0), 0);
-    if (top3 > best) { best = top3; death = k; }
-  }
+  for (const k of Object.keys(g)) { const t3 = g[k].slice(0, 3).reduce((s, t) => s + (t.elo || 0), 0); if (t3 > best) { best = t3; death = k; } }
   const rots = [-1, .8, -.6, 1, -.9, .5];
   paint('#groupsGrid', Object.keys(g).sort().map((k, gi) => {
-    // standings order: points, then goal difference, then the model's adv%
-    const teams = [...g[k]].sort((x, y) => { const X = tbl[x.team], Y = tbl[y.team];
-      return (Y.pts - X.pts) || ((Y.gf - Y.ga) - (X.gf - X.ga)) || (y.adv - x.adv); });
-    const rows = teams.map((t, i) => { const s = tbl[t.team] || { p: 0, pts: 0, gf: 0, ga: 0, w: 0, d: 0, l: 0 };
-      const gd = s.gf - s.ga;
+    const teams = [...g[k]].sort((x, y) => {
+      if (mode === 'real') { const X = tbl[x.team], Y = tbl[y.team];
+        return (Y.pts - X.pts) || ((Y.gf - Y.ga) - (X.gf - X.ga)) || (Y.gf - X.gf) || (y.adv - x.adv); }
+      return y.adv - x.adv;
+    });
+    const rows = teams.map((t, i) => {
+      const s = tbl[t.team] || { p: 0, pts: 0, gf: 0, ga: 0, w: 0, d: 0, l: 0 };
+      const gd = s.gf - s.ga, qual = (mode === 'real' && i < 2) ? ' qual' : '';
+      const left = `<span class="gpos${qual}">${i + 1}</span>${flagHTML(t.flag, 'flag-sm', t.team)}`;
+      if (mode === 'real') {
+        const fc = (form[t.team] || []).slice(-5).map(r => `<i class="fc fc-${r}" title="${r}"></i>`).join('') || '<span class="fc-none">—</span>';
+        return `
+      <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
+        ${left}
+        <span class="gnm">${esc(t.team)}<small>P${s.p} · ${gd >= 0 ? '+' : ''}${gd} · ${esc(t.confed)}</small></span>
+        <span class="gform" title="${s.w}W ${s.d}D ${s.l}L">${fc}</span>
+        <span class="gpts">${s.pts}<small>pts</small></span>
+      </div>`;
+      }
       return `
       <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
-        <span class="gpos">${i + 1}</span>
-        ${flagHTML(t.flag, 'flag-sm', t.team)}
-        <span class="gnm">${esc(t.team)}<small>${s.p ? `P${s.p} \u00b7 ${gd >= 0 ? '+' : ''}${gd} GD` : `Elo ${Math.round(t.elo)}`} \u00b7 ${esc(t.confed)}</small></span>
-        <span class="gpts" title="Played ${s.p} \u00b7 ${s.w}W ${s.d}D ${s.l}L \u00b7 GF ${s.gf} GA ${s.ga}">${s.pts}<small>pts</small></span>
+        ${left}
+        <span class="gnm">${esc(t.team)}<small>Elo ${Math.round(t.elo)} · ${esc(t.confed)}</small></span>
         <div class="advwrap">
           <div class="advbar"><span style="width:${t.adv}%;background:${t.adv >= 60 ? 'var(--teal)' : t.adv >= 35 ? 'var(--gold)' : 'var(--red)'}"></span></div>
           <span class="advpct" data-num="${t.adv}" data-fmt="pctint">${t.adv}%</span>
         </div>
-      </div>`; }).join('');
+      </div>`;
+    }).join('');
+    const head = mode === 'real'
+      ? `<span class="gname">Group ${k}</span><span class="gtag">${anyPlayed ? 'Table · form' : 'Not started'}</span>`
+      : `<span class="gname">Group ${k}</span>${k === death ? '<span class="gtag death">💀 Group of Death</span>' : '<span class="gtag">Adv%</span>'}`;
     return `<div class="group-card" data-mk="${esc(k)}" style="--rot:${rots[gi % rots.length]}deg">
-      <div class="gc-head">
-        <span class="gname">Group ${k}</span>
-        ${k === death ? '<span class="gtag death">\ud83d\udc80 Group of Death</span>'
-                      : `<span class="gtag">${anyPlayed ? 'Pts \u00b7 Adv%' : 'Adv%'}</span>`}
-      </div>${rows}</div>`;
+      <div class="gc-head">${head}</div>${rows}</div>`;
   }).join(''));
 }
 
@@ -1330,6 +1342,16 @@ async function boot() {
   safe(renderFixtures, '/api/fixtures.json', '#mcList');
   safe(renderBracket, '/api/bracket.json', '#bracket');
   safe(renderGroups, '/api/groupadv.json', '#groupsGrid');
+  // Groups Prediction <-> Reality toggle (prediction = adv% + model order;
+  // reality = real table sorted by points/GD with recent form).
+  (function setupGroupsMode() {
+    const gp = $('#grpPred'), gr = $('#grpReal');
+    if (!gp || !gr) return;
+    const set = m => { STATE.groupsMode = m; gp.classList.toggle('on', m === 'pred');
+      gr.classList.toggle('on', m === 'real'); if (STATE.groupadv) renderGroups(STATE.groupadv); };
+    gp.addEventListener('click', () => set('pred'));
+    gr.addEventListener('click', () => set('real'));
+  })();
   safe(renderRankings, '/api/rankings.json', '#rankBoard');
   safe(renderNews, '/api/news.json', '#clippings');
   renderWhole();                                   // page 01 — the mural funnel (self-fetches + caches)
@@ -1447,8 +1469,10 @@ async function boot() {
     const sw = $('#ovSwitch'), b2 = $('#ov2d'), b3 = $('#ov3d');
     const mural = $('#mural'), mountEl = $('#overview3dMount');
     if (!sw || !mountEl || !mural || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const probe = document.createElement('canvas');
-    if (!(probe.getContext('webgl') || probe.getContext('experimental-webgl'))) return;  // no WebGL -> 2D only
+    let webgl = false;
+    try { const probe = document.createElement('canvas');
+      webgl = !!(probe.getContext('webgl') || probe.getContext('experimental-webgl')); } catch (e) {}
+    if (!webgl) return;  // no WebGL -> 2D only
     sw.hidden = false;
     let inst = null, loadingThree = null;
     const loadThree = () => window.THREE ? Promise.resolve()
