@@ -12,8 +12,8 @@ watch loop. Stdlib-only (no extra deps) — it just drives the existing
     python manage.py            # open the menu
     python manage.py status         # one-shot status, then exit
     python manage.py refresh        # one-shot local refresh, then exit
-    python manage.py deploy [full]  # one-shot deploy (export->verify->push);
-                                    #   add 'full' to ingest live + retrain + re-sim first
+    python manage.py deploy         # one-shot FULL deploy: ingest live + retrain +
+                                    #   simulate 50k + export + verify + push
 """
 from __future__ import annotations
 import json
@@ -243,20 +243,17 @@ def _export_verified():
     return True
 
 
-def action_deploy(interactive=True, full=False):
-    print(banner("\n  DEPLOY — rebuild ./dist from source, then push to Cloudflare"))
-    print(f"  {DIM}Always re-exports + re-stamps so CSS/JS/data ship together (never stale).{RST}")
-    if interactive:
-        full = confirm("  Refresh live data first (ingest results+news · retrain · re-sim 50k)? [y/N]")
-        if not confirm("  This publishes to the LIVE site. Continue? [y/N]"):
-            print(warn("  cancelled")); return
-    if full:
-        for args, label in [(["ingest", "live"], "ingest live results"),
-                            (["ingest", "news"], "ingest news"),
-                            (["train"], "retrain ratings"),
-                            (["simulate", "50000"], "simulate 50,000 tournaments")]:
-            if run_cmd([PY, "run.py", *args], label=label) != 0:
-                print(bad(f"  '{label}' failed — aborting before deploy.")); return
+def action_deploy(interactive=True):
+    print(banner("\n  FULL DEPLOY — refresh live data, re-simulate, rebuild & push"))
+    print(f"  {DIM}ingest live + news · retrain · simulate 50k · export · verify · deploy{RST}")
+    if interactive and not confirm("  This publishes to the LIVE site. Continue? [y/N]"):
+        print(warn("  cancelled")); return
+    for args, label in [(["ingest", "live"], "ingest live results"),
+                        (["ingest", "news"], "ingest news"),
+                        (["train"], "retrain ratings"),
+                        (["simulate", "50000"], "simulate 50,000 tournaments")]:
+        if run_cmd([PY, "run.py", *args], label=label) != 0:
+            print(bad(f"  '{label}' failed — aborting before deploy.")); return
     if not _export_verified():
         return
     print(banner("\n  deploying ./dist to Cloudflare Pages…"))
@@ -342,12 +339,12 @@ def action_viz():
 #  menu
 # --------------------------------------------------------------------------- #
 MENU = [
-    ("Status & health",        "live site freshness, matches, model record", action_status),
-    ("Live refresh",           "pull results+news → retrain → re-sim (local)", action_refresh),
-    ("Deploy",                 "rebuild ./dist from source → verify → push to Cloudflare", action_deploy),
-    ("Watch mode",             "auto-refresh every N min (match-day loop)",   action_watch),
-    ("Pipeline & tools",       "ingest/train/backtest/tune/simulate/predict…", action_pipeline),
-    ("Open local dashboard",   "run the retro dashboard on :8008",            action_viz),
+    ("Status & health",        "live site freshness, matches, model record",   action_status),
+    ("Full deploy",            "refresh live data + re-sim 50k + rebuild → push", action_deploy),
+    ("Watch mode",             "auto-refresh every N min (match-day loop)",     action_watch),
+    ("Live refresh",           "pull results+news → retrain → re-sim (local, no deploy)", action_refresh),
+    ("Pipeline & tools",       "ingest/train/backtest/tune/simulate/predict…",  action_pipeline),
+    ("Open local dashboard",   "run the retro dashboard on :8008",              action_viz),
 ]
 
 
@@ -392,7 +389,7 @@ def main():
     elif arg == "refresh":
         action_refresh()
     elif arg == "deploy":
-        action_deploy(interactive=False, full=(len(sys.argv) > 2 and sys.argv[2].lower() == "full"))
+        action_deploy(interactive=False)
     elif arg in (None,):
         menu()
     else:
