@@ -1,0 +1,1902 @@
+diff --git a/viz/export.py b/viz/export.py
+index 6628f60..ce80979 100644
+--- a/viz/export.py
++++ b/viz/export.py
+@@ -178,7 +178,7 @@ def _cdn_config(dist: str) -> None:
+   Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+   Permissions-Policy: accelerometer=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), usb=(), interest-cohort=()
+   Cross-Origin-Opener-Policy: same-origin
+-  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
++  Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com https://cdnjs.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
+ 
+ /api/*
+   Cache-Control: public, max-age=300, stale-while-revalidate=600
+diff --git a/viz/server.py b/viz/server.py
+index 7c0c310..bf23ac0 100644
+--- a/viz/server.py
++++ b/viz/server.py
+@@ -72,7 +72,7 @@ CSP = (
+     "img-src 'self' https://flagcdn.com data:; "
+     "style-src 'self' 'unsafe-inline'; "
+     "font-src 'self'; "
+-    "script-src 'self'; "
++    "script-src 'self' https://cdnjs.cloudflare.com; "
+     "connect-src 'self'; "
+     "base-uri 'none'; "
+     "frame-ancestors 'none'; "
+diff --git a/viz/static/app.js b/viz/static/app.js
+index ad761ec..2d0afd5 100644
+--- a/viz/static/app.js
++++ b/viz/static/app.js
+@@ -35,6 +35,115 @@ function toast(msg) {
+   clearTimeout(toast._t); toast._t = setTimeout(() => (t.hidden = true), 2200);
+ }
+ 
++// ----- live-update primitives --------------------------------------------
++// Honour reduced-motion everywhere: tweens/flashes degrade to an instant set.
++const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
++
++// Formatters a tweened number can render through. The element stores its target
++// underlying value in data-num and the formatter key in data-fmt; the tween
++// walks the underlying value (e.g. a 0–1 probability) and re-formats each frame
++// so a "23.1%" counts up honestly rather than lerping the printed string.
++const FMT = {
++  pct:    v => pct(v, 1),
++  pct0:   v => pct(v, 0),
++  pctint: v => Math.round(v) + '%',     // value already on a 0–100 scale
++  int:    v => Math.round(v).toLocaleString(),
++  g1:     v => v.toFixed(1),
++  g2:     v => v.toFixed(2),
++};
++// Count a number element from its current value to el.dataset.num. No-op (sets
++// straight to target) under reduced-motion or for tiny deltas.
++function tweenNum(el, from) {
++  const to = parseFloat(el.dataset.num);
++  const fmt = FMT[el.dataset.fmt] || FMT.int;
++  if (!isFinite(to)) return;
++  if (from == null || !isFinite(from)) from = to;
++  if (REDUCE_MOTION || Math.abs(to - from) < 1e-9) { el.textContent = fmt(to); return; }
++  const t0 = performance.now(), DUR = 620;
++  cancelAnimationFrame(el._raf || 0);
++  const step = now => {
++    const k = Math.min(1, (now - t0) / DUR);
++    const e = 1 - Math.pow(1 - k, 3);                 // easeOutCubic
++    el.textContent = fmt(from + (to - from) * e);
++    if (k < 1) el._raf = requestAnimationFrame(step);
++  };
++  el._raf = requestAnimationFrame(step);
++}
++// Brief highlight on a value that just changed.
++function flash(el) {
++  if (!el || REDUCE_MOTION) return;
++  el.classList.remove('lv-flash');
++  void el.offsetWidth;                                // restart the animation
++  el.classList.add('lv-flash');
++}
++
++// Keyed in-place update. Repeating rows carry data-mk="<stable key>"; on a
++// refresh we reconcile by key instead of replacing innerHTML wholesale — so the
++// numbers count up (tweenNum), changed rows flash, focus/scroll survive and
++// nothing flickers. Falls back to a plain swap when keys are absent or the set
++// of keys changed wholesale (e.g. a fixture moved from upcoming → results).
++function morph(host, html) {
++  if (!host) return;
++  if (!host.dataset.morph) { host.innerHTML = html; host.dataset.morph = '1'; return; }
++  const tpl = document.createElement('div'); tpl.innerHTML = html;
++  const newRows = [...tpl.children];
++  const keyed = newRows.length && newRows.every(n => n.dataset.mk);
++  const oldKeyed = [...host.children].every(n => n.dataset.mk);
++  if (!keyed || !oldKeyed) { host.innerHTML = html; return; }
++  const oldMap = new Map([...host.children].map(n => [n.dataset.mk, n]));
++  const newKeys = new Set(newRows.map(n => n.dataset.mk));
++  // drop rows that no longer exist
++  for (const [k, n] of oldMap) if (!newKeys.has(k)) n.remove();
++  let prev = null;
++  for (const nn of newRows) {
++    const k = nn.dataset.mk, old = oldMap.get(k);
++    if (old) { morphRow(old, nn); place(host, old, prev); prev = old; }
++    else { nn.classList.add('lv-enter'); place(host, nn, prev); prev = nn; }
++  }
++}
++function place(host, node, prev) {
++  const ref = prev ? prev.nextSibling : host.firstChild;
++  if (node !== ref) host.insertBefore(node, ref);
++}
++// Reconcile one surviving row: capture old underlying values, adopt the new
++// markup (labels/bars/classes), then tween each number from its old value and
++// flash the row if anything actually changed.
++function morphRow(oldEl, newEl) {
++  if (oldEl.isEqualNode(newEl)) return;
++  const oldNums = [...oldEl.querySelectorAll('[data-num]')].map(n => parseFloat(n.dataset.num));
++  const wasOpen = oldEl.classList.contains('open');
++  oldEl.innerHTML = newEl.innerHTML;
++  // copy attributes (class/style/aria) but keep an expanded card expanded
++  for (const a of [...oldEl.attributes]) if (!newEl.hasAttribute(a.name)) oldEl.removeAttribute(a.name);
++  for (const a of [...newEl.attributes]) oldEl.setAttribute(a.name, a.value);
++  if (wasOpen) { oldEl.classList.add('open'); oldEl.setAttribute('aria-expanded', 'true'); }
++  [...oldEl.querySelectorAll('[data-num]')].forEach((n, i) => tweenNum(n, oldNums[i]));
++  flash(oldEl);
++}
++const paint = (sel, html) => { const h = $(sel); if (h) morph(h, html); };
++
++// ----- live match state ---------------------------------------------------
++// The engine has no "in-play" flag: a match that has kicked off but isn't
++// scored yet still sits in `upcoming` with a past `kickoff`. We derive the
++// phase on the client. A football match (90' + half-time + stoppage) is treated
++// as live for ~125 min after kickoff; after that an unscored tie is "awaiting"
++// the result feed rather than implied still-playing.
++const LIVE_MS = 125 * 60 * 1000;
++const SOON_MS = 60 * 60 * 1000;
++function matchPhase(m, now = Date.now()) {
++  const ko = m.kickoff ? Date.parse(m.kickoff) : NaN;
++  if (!isFinite(ko)) return { phase: 'pre', ko: NaN };
++  const dt = now - ko;
++  if (dt < 0) return { phase: dt > -SOON_MS ? 'soon' : 'pre', ko, ms: -dt };
++  if (dt < LIVE_MS) return { phase: 'live', ko, ms: dt, minute: Math.max(1, Math.floor(dt / 60000)) };
++  return { phase: 'await', ko, ms: dt };
++}
++// every live fixture from a fixtures payload, soonest kickoff first
++function liveFixtures(fx) {
++  return (fx?.upcoming || []).filter(m => matchPhase(m).phase === 'live')
++    .sort((a, b) => Date.parse(a.kickoff) - Date.parse(b.kickoff));
++}
++
+ // ----- shared state -------------------------------------------------------
+ const STATE = { meta: null, report: null, static: false };
+ 
+@@ -129,26 +238,26 @@ function renderOdds(rep) {
+ 
+   // podium (top 3)
+   const medals = ['①', '②', '③'];
+-  $('#podium').innerHTML = odds.slice(0, 3).map((o, i) => `
+-    <div class="pod pod-${i + 1}">
++  paint('#podium', odds.slice(0, 3).map((o, i) => `
++    <div class="pod pod-${i + 1}" data-mk="${esc(o.team)}">
+       <div class="sticker foil tape">
+         <div class="medal">${medals[i]}</div>
+         ${flagHTML(o.flag, 'flag', o.team)}
+         <div class="pod-team">${esc(o.team)}</div>
+-        <div class="pod-win">${pct(o.p_win)}</div>
++        <div class="pod-win"><span data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span></div>
+         <div class="pod-sub">final ${pct(o.p_final)} · semi ${pct(o.p_semi)}</div>
+       </div>
+-    </div>`).join('');
++    </div>`).join(''));
+ 
+   // (The cover no longer reveals the favourite — the winner is the payoff of
+   // "The Whole" mural, not a spoiler on the front page.)
+ 
+   // full ranked list
+-  $('#oddsList').innerHTML = odds.map((o, i) => {
++  paint('#oddsList', odds.map((o, i) => {
+     const w = Math.max(2, (o.p_win / maxWin) * 100);
+     const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 24)}px" title="${pct(v)}"></span>`;
+     return `
+-      <div class="odds-row profile-link" data-team="${esc(o.team)}" role="button" tabindex="0" aria-label="Open ${esc(o.team)} profile">
++      <div class="odds-row profile-link" data-mk="${esc(o.team)}" data-team="${esc(o.team)}" role="button" tabindex="0" aria-label="Open ${esc(o.team)} profile">
+         <span class="orank">${i + 1}</span>
+         ${flagHTML(o.flag, 'flag-sm', o.team)}
+         <div class="obar-wrap">
+@@ -159,10 +268,10 @@ function renderOdds(rep) {
+           <div class="road" title="QF / SF / Final / Win">
+             ${pip(o.p_quarter)}${pip(o.p_semi)}${pip(o.p_final, 'f')}${pip(o.p_win, 'w')}
+           </div>
+-          <span class="owin">${pct(o.p_win)}</span>
++          <span class="owin" data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span>
+         </div>
+       </div>`;
+-  }).join('');
++  }).join(''));
+ }
+ 
+ // =========================================================================
+@@ -217,31 +326,64 @@ function renderBracket(b) {
+ // =========================================================================
+ function renderGroups(g) {
+   if (g.error) { $('#groupsGrid').innerHTML = `<p class="loading">${esc(g.error)}</p>`; return; }
+-  // toughest group = highest combined Elo of its top three sides
++  STATE.groupadv = g;
++  const mode = STATE.groupsMode || 'pred';
++  // standings + recent form from completed intra-group matches (3/1/0)
++  const tbl = {}, grpOf = {}, form = {};
++  Object.keys(g).forEach(k => g[k].forEach(t => { grpOf[t.team] = k;
++    tbl[t.team] = { p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0 }; form[t.team] = []; }));
++  ((STATE.fixtures && STATE.fixtures.completed) || []).slice()
++    .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
++    .forEach(m => {
++      const h = m.home.team, a = m.away.team;
++      if (grpOf[h] && grpOf[h] === grpOf[a] && m.home_score != null && m.away_score != null) {
++        const H = tbl[h], A = tbl[a], hs = m.home_score, as = m.away_score;
++        H.p++; A.p++; H.gf += hs; H.ga += as; A.gf += as; A.ga += hs;
++        if (hs > as) { H.w++; A.l++; H.pts += 3; form[h].push('W'); form[a].push('L'); }
++        else if (hs < as) { A.w++; H.l++; A.pts += 3; form[h].push('L'); form[a].push('W'); }
++        else { H.d++; A.d++; H.pts++; A.pts++; form[h].push('D'); form[a].push('D'); }
++      }
++    });
++  const anyPlayed = Object.values(tbl).some(s => s.p);
+   let death = null, best = -1;
+-  for (const k of Object.keys(g)) {
+-    const top3 = g[k].slice(0, 3).reduce((s, t) => s + (t.elo || 0), 0);
+-    if (top3 > best) { best = top3; death = k; }
+-  }
++  for (const k of Object.keys(g)) { const t3 = g[k].slice(0, 3).reduce((s, t) => s + (t.elo || 0), 0); if (t3 > best) { best = t3; death = k; } }
+   const rots = [-1, .8, -.6, 1, -.9, .5];
+-  $('#groupsGrid').innerHTML = Object.keys(g).sort().map((k, gi) => {
+-    const rows = g[k].map((t, i) => `
++  paint('#groupsGrid', Object.keys(g).sort().map((k, gi) => {
++    const teams = [...g[k]].sort((x, y) => {
++      if (mode === 'real') { const X = tbl[x.team], Y = tbl[y.team];
++        return (Y.pts - X.pts) || ((Y.gf - Y.ga) - (X.gf - X.ga)) || (Y.gf - X.gf) || (y.adv - x.adv); }
++      return y.adv - x.adv;
++    });
++    const rows = teams.map((t, i) => {
++      const s = tbl[t.team] || { p: 0, pts: 0, gf: 0, ga: 0, w: 0, d: 0, l: 0 };
++      const gd = s.gf - s.ga, qual = (mode === 'real' && i < 2) ? ' qual' : '';
++      const left = `<span class="gpos${qual}">${i + 1}</span>${flagHTML(t.flag, 'flag-sm', t.team)}`;
++      if (mode === 'real') {
++        const fc = (form[t.team] || []).slice(-5).map(r => `<i class="fc fc-${r}" title="${r}"></i>`).join('') || '<span class="fc-none">—</span>';
++        return `
+       <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
+-        <span class="gpos">${i + 1}</span>
+-        ${flagHTML(t.flag, 'flag-sm', t.team)}
++        ${left}
++        <span class="gnm">${esc(t.team)}<small>P${s.p} · ${gd >= 0 ? '+' : ''}${gd} · ${esc(t.confed)}</small></span>
++        <span class="gform" title="${s.w}W ${s.d}D ${s.l}L">${fc}</span>
++        <span class="gpts">${s.pts}<small>pts</small></span>
++      </div>`;
++      }
++      return `
++      <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
++        ${left}
+         <span class="gnm">${esc(t.team)}<small>Elo ${Math.round(t.elo)} · ${esc(t.confed)}</small></span>
+         <div class="advwrap">
+           <div class="advbar"><span style="width:${t.adv}%;background:${t.adv >= 60 ? 'var(--teal)' : t.adv >= 35 ? 'var(--gold)' : 'var(--red)'}"></span></div>
+-          <span class="advpct">${t.adv}%</span>
++          <span class="advpct" data-num="${t.adv}" data-fmt="pctint">${t.adv}%</span>
+         </div>
+-      </div>`).join('');
+-    return `<div class="group-card" style="--rot:${rots[gi % rots.length]}deg">
+-      <div class="gc-head">
+-        <span class="gname">Group ${k}</span>
+-        ${k === death ? '<span class="gtag death">💀 Group of Death</span>'
+-                      : '<span class="gtag">Adv%</span>'}
+-      </div>${rows}</div>`;
+-  }).join('');
++      </div>`;
++    }).join('');
++    const head = mode === 'real'
++      ? `<span class="gname">Group ${k}</span><span class="gtag">${anyPlayed ? 'Table · form' : 'Not started'}</span>`
++      : `<span class="gname">Group ${k}</span>${k === death ? '<span class="gtag death">💀 Group of Death</span>' : '<span class="gtag">Adv%</span>'}`;
++    return `<div class="group-card" data-mk="${esc(k)}" style="--rot:${rots[gi % rots.length]}deg">
++      <div class="gc-head">${head}</div>${rows}</div>`;
++  }).join(''));
+ }
+ 
+ // =========================================================================
+@@ -452,8 +594,25 @@ function mcSide(card, side, isFav, isWin) {
+   const fl = flagHTML(card.flag, 'flag-sm', card.team);
+   return `<div class="${cls}">${side === 'home' ? fl + nm + elo : elo + nm + fl}</div>`;
+ }
++// The "when" cell for an upcoming tie: a pulsing LIVE clock once it has kicked
++// off (minute ticked by the live ticker), an "● kicks off soon" flag in the last
++// hour, an "awaiting result" note once it's run long past kickoff, else the
++// localised kickoff time.
++function mcWhen(m) {
++  const ph = matchPhase(m);
++  if (ph.phase === 'live')
++    return `<div class="mc-kick mc-live"><span class="livedot"></span>LIVE <b data-live-start="${esc(m.kickoff)}">${ph.minute}'</b></div>`;
++  if (ph.phase === 'await')
++    return `<div class="mc-kick mc-await">FT? <small>awaiting result</small></div>`;
++  const k = fmtKick(m.kickoff);
++  if (ph.phase === 'soon' && k)
++    return `<div class="mc-kick mc-soon"><span class="livedot"></span>${k.time}<small>${esc(k.tz)}</small></div>`;
++  return k ? `<div class="mc-kick">${k.time}<small>${esc(k.tz)}</small></div>` : '';
++}
++
+ function mcCard(m, done) {
+   const favHome = m.fav === 'home', favAway = m.fav === 'away';
++  const mk = `data-mk="${esc(m.home.team)}|${esc(m.away.team)}"`;
+   let mid;
+   if (done) {
+     const winH = m.actual === 'home', winA = m.actual === 'away';
+@@ -465,20 +624,20 @@ function mcCard(m, done) {
+         ${stamp}
+         <div class="mc-line">model: ${wdwLabel(m)}</div>
+       </div>`;
+-    return `<div class="mc-card done">
++    return `<div class="mc-card done" ${mk}>
+         <div class="mc-date">${fmtDate(m.date)}</div>
+         ${mcSide(m.home, 'home', favHome, winH ? true : winA ? false : null)}
+         ${mid}
+         ${mcSide(m.away, 'away', favAway, winA ? true : winH ? false : null)}
+       </div>`;
+   }
+-  const k = fmtKick(m.kickoff);
++  const phase = matchPhase(m).phase;                         // pre · soon · live · await
+   mid = `<div class="mc-mid">
+-      ${k ? `<div class="mc-kick">${k.time}<small>${esc(k.tz)}</small></div>` : ''}
++      ${mcWhen(m)}
+       ${wdwBar(m.p_home, m.p_draw, m.p_away, m.fav)}
+       <div class="mc-line">xG ${m.exp_home_goals.toFixed(1)}–${m.exp_away_goals.toFixed(1)} · likely <b>${esc(m.top_scoreline)}</b>${m.neutral ? '' : ' · home adv'}</div>
+     </div>`;
+-  return `<div class="mc-card">
++  return `<div class="mc-card ${phase === 'live' ? 'is-live' : phase === 'soon' ? 'is-soon' : ''}" ${mk}>
+       <div class="mc-date">${fmtDate(m.date)}</div>
+       ${mcSide(m.home, 'home', favHome)}
+       ${mid}
+@@ -503,8 +662,9 @@ function renderFixtures(data) {
+   }
+   $('#mcTabDone').textContent = `Results${rec.played ? ' (' + rec.played + ')' : ''}`;
+   $('#mcTabUp').textContent = `Upcoming${data.upcoming?.length ? ' (' + data.upcoming.length + ')' : ''}`;
+-  // default to results once any exist, else upcoming
+-  if (!STATE.mcTab) STATE.mcTab = (rec.played ? 'completed' : 'upcoming');
++  // default to results once any exist, else upcoming — but while a match is in
++  // play, open on Upcoming so the live action is front-and-centre.
++  if (!STATE.mcTab) STATE.mcTab = liveFixtures(data).length ? 'upcoming' : (rec.played ? 'completed' : 'upcoming');
+   paintFixtures();
+ }
+ function paintFixtures() {
+@@ -515,26 +675,40 @@ function paintFixtures() {
+     b.classList.toggle('active', on);
+     b.setAttribute('aria-selected', on ? 'true' : 'false');
+   });
++  const completedTab = tab === 'completed';
++  // Any match that has kicked off but isn't scored yet is pinned to the top of
++  // the list under a LIVE banner — shown on EITHER tab so a match in play is
++  // never hidden — and pulled out of the day grouping so it never shows twice.
++  const live = liveFixtures(data);
++  const liveSet = new Set(live.map(m => m.home.team + '|' + m.away.team));
+   // Upcoming reads forward in time; Results reads backward (latest at the top —
+   // with 104 matches over five weeks nobody scrolls for last night's score).
+-  const list = [...((tab === 'completed' ? data.completed : data.upcoming) || [])]
+-    .sort((a, b) => tab === 'completed' ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
+-  if (!list.length) {
+-    $('#mcList').innerHTML = `<p class="loading">${tab === 'completed'
++  const base = [...((completedTab ? data.completed : data.upcoming) || [])]
++    .filter(m => !liveSet.has(m.home.team + '|' + m.away.team))
++    .sort((a, b) => completedTab ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
++
++  if (!base.length && !live.length) {
++    $('#mcList').innerHTML = `<p class="loading">${completedTab
+       ? 'No results yet — the tournament hasn\'t kicked off. Check back from ' + fmtDate(data.kickoff) + '.'
+       : 'No upcoming fixtures scheduled.'}</p>`;
+     return;
+   }
++  let html = '';
++  if (live.length) {
++    html += `<div class="mc-day mc-day-live"><span class="livedot"></span>LIVE NOW · ${live.length} match${live.length > 1 ? 'es' : ''} underway</div>`;
++    html += live.map(m => mcCard(m, false)).join('');
++  }
+   // group by the viewer's LOCAL day (a late kickoff can fall on a different
+   // calendar day depending where in the world you are), with a day header
+-  let html = '', day = null;
+-  for (const m of list) {
++  let day = null;
++  for (const m of base) {
+     const k = fmtKick(m.kickoff);
+     const label = k ? k.day : fmtDate(m.date);
+     if (label !== day) { day = label; html += `<div class="mc-day">${label}</div>`; }
+-    html += mcCard(m, tab === 'completed');
++    html += mcCard(m, completedTab);
+   }
+   $('#mcList').innerHTML = html;
++  syncLivePill();
+ }
+ 
+ // =========================================================================
+@@ -774,20 +948,33 @@ async function renderWhole() {
+ 
+ function muralPulse(fx) {
+   const rec = fx.record || {};
+-  const up = (fx.upcoming || []).find(m => m.kickoff) || (fx.upcoming || [])[0];
++  const live = liveFixtures(fx);
++  const liveSet = new Set(live.map(m => m.home.team + '|' + m.away.team));
++  const up = (fx.upcoming || []).filter(m => !liveSet.has(m.home.team + '|' + m.away.team))
++              .find(m => m.kickoff) || (fx.upcoming || [])[0];
+   const last = (fx.completed || [])[0];
+   const ko = up && up.kickoff ? `<span class="pulse-cd" data-ko="${esc(up.kickoff)}">--:--:--</span>` : '';
+   const lastHTML = last
+     ? `${flagHTML(last.home.flag, 'flag-xs', last.home.team)}<b>${last.home_score}–${last.away_score}</b>${flagHTML(last.away.flag, 'flag-xs', last.away.team)} ${last.called ? '<span class="ok">✓</span>' : '<span class="miss">✗</span>'}`
+     : 'the cup begins 11 June';
+-  const nextHTML = up
+-    ? `<span class="profile-link" data-team="${esc(up.home.team)}">${flagHTML(up.home.flag, 'flag-xs', up.home.team)}${esc(up.home.team)}</span> v <span class="profile-link" data-team="${esc(up.away.team)}">${esc(up.away.team)}${flagHTML(up.away.flag, 'flag-xs', up.away.team)}</span> ${ko}`
+-    : '—';
++  // Middle cell: LIVE while a match is underway, otherwise the next countdown.
++  let midK, midV;
++  if (live.length) {
++    const lm = live[0], extra = live.length > 1 ? ` <span class="pulse-more">+${live.length - 1}</span>` : '';
++    midK = 'LIVE';
++    midV = `<span class="profile-link" data-team="${esc(lm.home.team)}">${flagHTML(lm.home.flag, 'flag-xs', lm.home.team)}${esc(lm.home.team)}</span> v <span class="profile-link" data-team="${esc(lm.away.team)}">${esc(lm.away.team)}${flagHTML(lm.away.flag, 'flag-xs', lm.away.team)}</span> <span class="pulse-min"><span class="livedot"></span><b data-live-start="${esc(lm.kickoff)}">${matchPhase(lm).minute}'</b></span>${extra}`;
++  } else {
++    midK = 'NEXT';
++    midV = up
++      ? `<span class="profile-link" data-team="${esc(up.home.team)}">${flagHTML(up.home.flag, 'flag-xs', up.home.team)}${esc(up.home.team)}</span> v <span class="profile-link" data-team="${esc(up.away.team)}">${esc(up.away.team)}${flagHTML(up.away.flag, 'flag-xs', up.away.team)}</span> ${ko}`
++      : '—';
++  }
+   const recHTML = rec.played ? `called <b>${rec.called}/${rec.played}</b> · ${pct(rec.pct)}` : 'record opens at kick-off';
+   $('#muralPulse').innerHTML =
+     `<div class="pulse-cell"><span class="pulse-k">LAST</span><span class="pulse-v">${lastHTML}</span></div>` +
+-    `<div class="pulse-cell"><span class="pulse-k">NEXT</span><span class="pulse-v">${nextHTML}</span></div>` +
++    `<div class="pulse-cell${live.length ? ' pulse-live' : ''}"><span class="pulse-k">${midK}</span><span class="pulse-v">${midV}</span></div>` +
+     `<div class="pulse-cell"><span class="pulse-k">MODEL</span><span class="pulse-v">${recHTML}</span></div>`;
++  syncLivePill();
+ }
+ 
+ function muralGroups(g) {
+@@ -808,9 +995,20 @@ function buildRiverSVG(bracket) {
+   if (!bracket || bracket.error || !bracket.r32) return '<p class="loading">bracket forming…</p>';
+   const wc = t => (t.winner === t.a.team ? t.a : t.b);          // the advancing (chalk/real) side
+   const R = bracket.rounds || {};
++  // The two finalists are the SF winners. The wallchart advances the head-to-head
++  // favourite each tie, which can crown the higher-Elo finalist even when the OTHER
++  // finalist is the model's title favourite (wins the cup more often across the sims).
++  // The altar beside this river ranks teams by exactly those title odds, so we crown
++  // the funnel by the same yardstick — the finalist with the higher title probability
++  // — keeping the mural internally consistent. Falls back to the bracket's own
++  // champion until the final is formed.
++  const finalists = (R.sf || []).map(wc).filter(c => c && c.team);
++  const championCard = finalists.length === 2
++    ? ((finalists[0].p_win ?? -1) >= (finalists[1].p_win ?? -1) ? finalists[0] : finalists[1])
++    : (bracket.champion || {});
+   const cols = [bracket.r32.map(wc), (R.r16 || []).map(wc), (R.qf || []).map(wc),
+-                (R.sf || []).map(wc), [bracket.champion || {}]];
+-  const champ = bracket.champion && bracket.champion.team;
++                (R.sf || []).map(wc), [championCard]];
++  const champ = championCard && championCard.team;
+   const W = 300, H = 540, padX = 18, ys = [40, 158, 268, 366, 452];
+   const xOf = (i, n) => padX + ((i + 0.5) / n) * (W - 2 * padX);
+   let currents = '', nodes = '';
+@@ -836,12 +1034,12 @@ function buildRiverSVG(bracket) {
+     });
+     nodes += `<text x="5" y="${ys[c] + 3}" font-size="9" fill="var(--ink-soft)" class="river-lbl">${labels[c]}</text>`;
+   });
+-  const cn = esc((bracket.champion && bracket.champion.team) || '');
++  const cn = esc(championCard.team || '');
+   return `<div class="mural-h">32 → 1 · the river</div>
+     <svg viewBox="0 0 ${W} ${H}" class="river-svg" role="img" aria-label="Knockout funnel to ${cn}">
+       ${currents}${nodes}
+       <text x="${W / 2}" y="${H - 34}" text-anchor="middle" class="river-champ">${cn}</text>
+-      <text x="${W / 2}" y="${H - 18}" text-anchor="middle" class="river-sub">PROJECTED CHAMPION · ${pct(bracket.champion && bracket.champion.p_win)}</text>
++      <text x="${W / 2}" y="${H - 18}" text-anchor="middle" class="river-sub">PROJECTED CHAMPION · ${pct(championCard.p_win)}</text>
+     </svg>`;
+ }
+ 
+@@ -850,22 +1048,32 @@ function muralAltar(rep) {
+   if (!odds.length) { $('#muralAltar').innerHTML = ''; return; }
+   const champ = odds[0];
+   const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(3, (v || 0) * 22)}px" title="${pct(v)}"></span>`;
+-  $('#muralAltar').innerHTML = `
+-    <div class="mural-h">the answer</div>
+-    <div class="altar-champ profile-link sticker foil" data-team="${esc(champ.team)}">
+-      <div class="altar-k">THE MODEL CROWNS</div>
+-      ${flagHTML(champ.flag, 'flag', champ.team)}
+-      <div class="altar-nm">${esc(champ.team)}</div>
+-      <div class="altar-win">${pct(champ.p_win)}</div>
+-      <div class="altar-sub">to lift the trophy</div>
+-    </div>
+-    <div class="altar-list">
+-      ${odds.slice(0, 6).map((o, i) => `<div class="altar-row profile-link" data-team="${esc(o.team)}">
++  // Champion block + ranked list. The block is rebuilt only when the crowned
++  // nation actually changes; otherwise we tween its % so a re-sim nudge reads as
++  // a live tick rather than a full repaint. The list always morphs by team key.
++  const host = $('#muralAltar'); if (!host) return;
++  const champBlock = host.querySelector('.altar-champ');
++  if (!champBlock || champBlock.dataset.team !== champ.team) {
++    host.innerHTML = `
++      <div class="mural-h">the answer</div>
++      <div class="altar-champ profile-link sticker foil" data-team="${esc(champ.team)}">
++        <div class="altar-k">THE MODEL CROWNS</div>
++        ${flagHTML(champ.flag, 'flag', champ.team)}
++        <div class="altar-nm">${esc(champ.team)}</div>
++        <div class="altar-win"><span data-num="${champ.p_win}" data-fmt="pct">${pct(champ.p_win)}</span></div>
++        <div class="altar-sub">to lift the trophy</div>
++      </div>
++      <div class="altar-list"></div>`;
++  } else {
++    const w = champBlock.querySelector('.altar-win span');
++    if (w) { const from = parseFloat(w.dataset.num); w.dataset.num = champ.p_win; tweenNum(w, from); flash(w); }
++  }
++  paint('#muralAltar .altar-list', odds.slice(0, 6).map((o, i) =>
++    `<div class="altar-row profile-link" data-mk="${esc(o.team)}" data-team="${esc(o.team)}">
+         <span class="ar-rank">${i + 1}</span>${flagHTML(o.flag, 'flag-xs', o.team)}
+         <span class="ar-nm">${esc(o.team)}</span>
+         <span class="road" title="QF · SF · Final · Win">${pip(o.p_quarter)}${pip(o.p_semi)}${pip(o.p_final, 'f')}${pip(o.p_win, 'w')}</span>
+-        <span class="ar-win">${pct(o.p_win)}</span></div>`).join('')}
+-    </div>`;
++        <span class="ar-win" data-num="${o.p_win}" data-fmt="pct">${pct(o.p_win)}</span></div>`).join(''));
+ }
+ 
+ function muralIntel(news) {
+@@ -877,88 +1085,217 @@ function muralIntel(news) {
+   }).join('<span class="marg-dot">•</span>');
+ }
+ 
+-function startMuralClock() {
+-  clearInterval(startMuralClock._t);
++function startMuralClock() { startLiveTicker(); }   // legacy alias
++
++// One global per-second heartbeat for everything time-sensitive on the page:
++//  · [data-ko]          — countdowns to the next kickoff (mural pulse)
++//  · [data-live-start]  — elapsed minute of a match in play (mc cards, pulse)
++//  · the topbar LIVE pill state
++// It runs for the life of the page (this is a live dashboard) but does almost
++// nothing when there's no live/imminent match on screen.
++function startLiveTicker() {
++  if (startLiveTicker._t) return;                  // single shared interval
++  const p = n => String(n).padStart(2, '0');
+   const tick = () => {
+-    const el = document.querySelector('.pulse-cd[data-ko]');
+-    if (!el) { clearInterval(startMuralClock._t); return; }
+-    let s = Math.max(0, Math.floor((new Date(el.getAttribute('data-ko')).getTime() - Date.now()) / 1000));
+-    if (s <= 0) { el.textContent = 'KICK-OFF'; return; }
+-    const d = Math.floor(s / 86400); s %= 86400;
+-    const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60), ss = s % 60;
+-    const p = n => String(n).padStart(2, '0');
+-    el.textContent = (d ? `${d}d ` : '') + `${p(h)}:${p(m)}:${p(ss)}`;
++    const now = Date.now();
++    document.querySelectorAll('.pulse-cd[data-ko]').forEach(el => {
++      let s = Math.max(0, Math.floor((Date.parse(el.getAttribute('data-ko')) - now) / 1000));
++      if (s <= 0) { el.textContent = 'KICK-OFF'; return; }
++      const d = Math.floor(s / 86400); s %= 86400;
++      const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60), ss = s % 60;
++      el.textContent = (d ? `${d}d ` : '') + `${p(h)}:${p(m)}:${p(ss)}`;
++    });
++    document.querySelectorAll('[data-live-start]').forEach(el => {
++      const mins = Math.floor((now - Date.parse(el.getAttribute('data-live-start'))) / 60000);
++      el.textContent = (mins >= 0 ? Math.max(1, mins) : 0) + "'";
++    });
++    syncLivePill();
+   };
+-  tick(); startMuralClock._t = setInterval(tick, 1000);
++  tick(); startLiveTicker._t = setInterval(tick, 1000);
++}
++
++// Reflect real live state in the topbar pill: idle = "LIVE" reload affordance,
++// active = "● LIVE n" with the underway-match count. Cached so we only touch the
++// DOM when the count changes.
++function syncLivePill() {
++  const pill = $('#livePill'); if (!pill) return;
++  const n = STATE.fixtures ? liveFixtures(STATE.fixtures).length : 0;
++  if (syncLivePill._n === n) return;
++  syncLivePill._n = n;
++  pill.classList.toggle('is-live', n > 0);
++  pill.innerHTML = `<span class="dot"></span> LIVE${n > 0 ? ' · ' + n : ''}`;
++  pill.title = n > 0
++    ? `${n} match${n > 1 ? 'es' : ''} in play — click to pull the latest model output`
++    : 'Reload the latest model output';
+ }
+ 
+ // =========================================================================
+ //  CANONICAL TEAM PROFILE  —  one detail view, opened from any nation anywhere
+ // =========================================================================
+ let _lastFocus = null;
+-async function openProfile(team) {
+-  if (!team) return;
+-  const ov = $('#profileOverlay'), body = $('#profileBody');
+-  _lastFocus = document.activeElement;
+-  body.innerHTML = '<p class="loading">opening profile…</p>';
+-  ov.hidden = false; document.body.classList.add('modal-open');
+-  $('#profileClose').focus();
+-  let d; try { d = await ensureData(); } catch (e) { d = { fixtures: {}, news: {}, media: {} }; }
++// Canonical 2026 World Cup national-team profile. One condensed card, opened from
++// any nation anywhere (mural, rankings, odds, groups, intel, bracket). On a fine
++// pointer it previews on hover and pins on click; on touch / small screens it
++// opens as a tap-driven bottom sheet. Everything it shows already lives in STATE
++// (meta/report/rankings/fixtures/news), so the card builds synchronously and hover
++// feels instant — and it never dumps content at the page foot again.
++const _pf = { team: null, pinned: false, anchor: null, t: 0 };
++const _pfSmall = () => matchMedia('(max-width: 560px)').matches;
++const _pfFine  = () => matchMedia('(hover: hover) and (pointer: fine)').matches;
++
++function profileBody(team) {
+   const f = _field(team);
+   const odds = ((STATE.report && STATE.report.title_odds) || []).find(o => o.team === team) || {};
+   const rk = (STATE.rankings || []).find(r => r.team === team) || {};
+-  const media = (d.media || {})[f.iso2] || (d.media || {})[team] || null;
+-  const next = (d.fixtures.upcoming || []).find(m => m.home.team === team || m.away.team === team);
+-  const teamNews = ((d.news && d.news.news) || []).filter(n => (n.teams || []).includes(team)).slice(0, 4);
+-
+-  const hero = (media && media.file)
+-    ? `<figure class="pf-hero"><img src="/media/teams/${esc(media.file)}" alt="${esc(team)}" loading="lazy" decoding="async"/>
+-         <figcaption class="pf-credit">📷 ${esc(media.credit || 'Wikimedia Commons')} · <a href="${esc(media.source_url || '#')}" target="_blank" rel="noopener nofollow">${esc(media.license || 'CC')}</a></figcaption></figure>`
+-    : `<div class="pf-hero pf-crest" style="--c:${f.confed_color || 'var(--gold)'}">${flagHTML(f.flag, 'flag-xl', team)}</div>`;
+-
+-  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(4, (v || 0) * 30)}px" title="${pct(v)}"></span>`;
+-  const stat = (k, v) => `<div class="pf-stat"><span>${k}</span><b>${v}</b></div>`;
+-  let nextHTML = '<div class="pf-next muted">No upcoming fixture scheduled.</div>';
++  const next = ((STATE.fixtures && STATE.fixtures.upcoming) || []).find(m => m.home.team === team || m.away.team === team);
++  const teamNews = (((STATE.news && STATE.news.news)) || []).filter(n => (n.teams || []).includes(team)).slice(0, 2);
++  const accent = f.confed_color || 'var(--gold)';
++  const pip = (v, cls = '') => `<span class="pip ${cls}" style="height:${Math.max(4, (v || 0) * 26)}px" title="${pct(v)}"></span>`;
++
++  let nextHTML = '';
+   if (next) {
+     const home = next.home.team === team, opp = home ? next.away : next.home;
+     const call = next.fav === 'draw' ? 'Draw' : ((next.fav === 'home') === home ? 'Win' : 'Loss');
+-    nextHTML = `<div class="pf-next"><span class="pf-k">NEXT</span>
+-      ${home ? 'vs' : 'at'} ${flagHTML(opp.flag, 'flag-xs', opp.team)} <b>${esc(opp.team)}</b>
+-      <span class="pf-call call-${call.toLowerCase()}">model: ${call}</span>
+-      <span class="muted">${esc(next.top_scoreline || '')}</span></div>`;
++    const ph = matchPhase(next), k = fmtKick(next.kickoff);
++    const when = ph.phase === 'live'
++      ? `<b class="pf-live"><span class="livedot"></span>LIVE</b>`
++      : (k ? esc(k.day) : '');
++    nextHTML = `<div class="pf-row pf-next"><span class="pf-k">NEXT</span>
++      <span class="pf-next-opp">${home ? 'vs' : 'at'} ${flagHTML(opp.flag, 'flag-xs', opp.team)} <b>${esc(opp.team)}</b></span>
++      <span class="pf-call call-${call.toLowerCase()}">${call}</span>
++      <span class="pf-when">${when}</span></div>`;
+   }
+   const intelHTML = teamNews.length
+-    ? `<div class="pf-intel"><span class="pf-k">INTEL</span>${teamNews.map(n =>
+-        `<div class="pf-clip">${(n.flags || []).slice(0, 1).map(x => `<i class="tag ${esc(x)}">${esc(x)}</i>`).join('')} ${esc(n.title)}</div>`).join('')}</div>`
++    ? `<div class="pf-row pf-intel"><span class="pf-k">INTEL</span><div class="pf-clips">${teamNews.map(n =>
++        `<div class="pf-clip">${(n.flags || []).slice(0, 1).map(x => `<i class="tag ${esc(x)}">${esc(x)}</i>`).join('')} ${esc(n.title)}</div>`).join('')}</div></div>`
+     : '';
+ 
+-  body.innerHTML = `
+-    ${hero}
+-    <div class="pf-head">
+-      <h3 id="profileName">${esc(team)}</h3>
+-      <div class="pf-sub">${esc(f.group ? 'Group ' + f.group : '')}${f.confed ? ' · ' + esc(f.confed) : ''} ${starHTML(f.stars)}</div>
++  return `
++    <div class="pf-banner" style="--c:${accent}">
++      ${flagHTML(f.flag, 'flag-lg', team)}
++      <div class="pf-id">
++        <h3 id="profileName">${esc(team)}</h3>
++        <div class="pf-sub">${f.group ? 'Group ' + esc(f.group) : ''}${f.confed ? (f.group ? ' · ' : '') + esc(f.confed) : ''}</div>
++      </div>
++      <span class="pf-tag">WC ’26</span>
+     </div>
+-    <div class="pf-stats">
+-      ${stat('Elo', f.elo != null ? Math.round(f.elo) : '—')}
+-      ${stat('Rank', rk.rank ? '#' + rk.rank : '—')}
+-      ${stat('Attack', rk.attack != null ? rk.attack : '—')}
+-      ${stat('Defence', rk.defence != null ? rk.defence : '—')}
++    <div class="pf-headline">
++      ${starHTML(f.stars)}
++      <span class="pf-win">${pct(odds.p_win)}<small>to win</small></span>
+     </div>
+-    <div class="pf-odds">
+-      <span class="pf-k">TITLE RUN</span>
+-      <span class="road">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span>
+-      <span class="pf-win">${pct(odds.p_win)} <small>to win</small></span>
++    <div class="pf-stats">
++      <div class="pf-stat"><span>Elo</span><b>${f.elo != null ? Math.round(f.elo) : '—'}</b></div>
++      <div class="pf-stat"><span>Rank</span><b>${rk.rank ? '#' + rk.rank : '—'}</b></div>
++      <div class="pf-stat"><span>Attack</span><b>${rk.attack != null ? rk.attack : '—'}</b></div>
++      <div class="pf-stat"><span>Defence</span><b>${rk.defence != null ? rk.defence : '—'}</b></div>
+     </div>
++    <div class="pf-row pf-odds"><span class="pf-k">TITLE&nbsp;RUN</span>
++      <span class="road" title="QF · SF · Final · Win">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span></div>
+     ${nextHTML}
+     ${intelHTML}`;
+ }
++
++function showProfile(team, anchor, pinned) {
++  if (!team) return;
++  const card = $('#profileCard'), scrim = $('#profileScrim');
++  if (!card) return;
++  clearTimeout(_pf.t);
++  if (pinned) _lastFocus = document.activeElement;
++  _pf.team = team; _pf.anchor = anchor || null; _pf.pinned = !!pinned;
++  $('#profileCardBody').innerHTML = profileBody(team);
++  card.classList.toggle('pinned', !!pinned);
++  card.hidden = false;
++  const sheet = !!pinned && _pfSmall();          // dim + lock scroll only for the mobile sheet
++  if (scrim) scrim.hidden = !sheet;
++  document.body.classList.toggle('modal-open', sheet);
++  positionProfile(anchor);
++  if (sheet) { const c = $('#profileClose'); if (c) c.focus({ preventScroll: true }); }
++}
++
++function positionProfile(anchor) {
++  const card = $('#profileCard');
++  if (!card || card.hidden) return;
++  if (_pfSmall()) { card.style.left = ''; card.style.top = ''; return; }   // CSS handles the sheet
++  if (!anchor || !anchor.getBoundingClientRect) return;
++  const r = anchor.getBoundingClientRect();
++  const cw = card.offsetWidth || 300, ch = card.offsetHeight || 240, M = 10;
++  const vw = window.innerWidth, vh = window.innerHeight;
++  let left = r.left, top = r.bottom + 8;
++  if (left + cw > vw - M) left = vw - M - cw;
++  if (left < M) left = M;
++  if (top + ch > vh - M) top = Math.max(M, r.top - 8 - ch);              // flip above the anchor
++  if (top < M) top = M;
++  card.style.left = left + 'px'; card.style.top = top + 'px';
++}
++
++function hideProfile(force) {
++  if (_pf.pinned && !force) return;
++  clearTimeout(_pf.t);
++  _pf.pinned = false; _pf.team = null; _pf.anchor = null;
++  const card = $('#profileCard'), scrim = $('#profileScrim');
++  if (card) card.hidden = true;
++  if (scrim) scrim.hidden = true;
++  document.body.classList.remove('modal-open');
++}
++
+ function closeProfile() {
+-  const ov = $('#profileOverlay');
+-  if (!ov || ov.hidden) return;
+-  ov.hidden = true; document.body.classList.remove('modal-open');
++  hideProfile(true);
+   if (_lastFocus && _lastFocus.focus) _lastFocus.focus();
+ }
+ 
++// =========================================================================
++//  LIVE AUTO-REFRESH  —  the heartbeat behind live match states + smooth updates
++//  Re-pulls the volatile feeds in the background and lets the render functions
++//  morph the changed numbers in place (no full-page reload, no scroll jump). The
++//  cadence adapts: brisk while a match is live or about to start, relaxed
++//  otherwise. Pauses while the tab is hidden and catches up on return.
++// =========================================================================
++async function refreshFeeds() {
++  const get = (k, url, fb) => API(url).then(r => (STATE[k] = r)).catch(() => (STATE[k] ?? fb));
++  const [report, fixtures, groupadv, bracket, news] = await Promise.all([
++    get('report', '/api/report.json', {}), get('fixtures', '/api/fixtures.json', {}),
++    get('groupadv', '/api/groupadv.json', {}), get('bracket', '/api/bracket.json', {}),
++    get('news', '/api/news.json', {}),
++  ]);
++  return { report, fixtures, groupadv, bracket, news };
++}
++async function softRefresh(announce) {
++  let d; try { d = await refreshFeeds(); } catch (e) { return; }
++  renderOdds(d.report);
++  renderFixtures(d.fixtures);
++  renderGroups(d.groupadv);
++  renderBracket(d.bracket);
++  // don't stomp an active Intel filter — only repaint the clippings when showing all
++  if (!$('#intelTeam')?.value) renderNews(d.news);
++  // update the mural in place (no _WHOLE teardown → no flash, scroll preserved)
++  muralPulse(d.fixtures); muralGroups(d.groupadv);
++  const river = $('#muralRiver'); if (river) river.innerHTML = buildRiverSVG(d.bracket);
++  muralAltar(d.report); muralIntel(d.news);
++  const l = $('#muralLoading'); if (l) l.hidden = true;
++  // keep the shared cache (used by team profiles) pointing at the fresh feeds
++  _WHOLE = Promise.resolve({ report: STATE.report, groupadv: STATE.groupadv,
++    bracket: STATE.bracket, fixtures: STATE.fixtures, news: STATE.news, media: STATE.media || {} });
++  if (announce) toast('album refreshed ⚽');
++}
++function nextRefreshDelay() {
++  const fx = STATE.fixtures;
++  if (fx) {
++    if (liveFixtures(fx).length) return 45000;                       // 45s while a match is live
++    const soon = (fx.upcoming || []).some(m => {
++      const ph = matchPhase(m); return ph.phase === 'soon' && ph.ms < 15 * 60000;
++    });
++    if (soon) return 60000;                                          // 1 min near a kickoff
++  }
++  return 300000;                                                     // 5 min otherwise
++}
++function scheduleRefresh() {
++  clearTimeout(scheduleRefresh._t);
++  scheduleRefresh._t = setTimeout(async () => {
++    if (!document.hidden) await softRefresh(false);
++    scheduleRefresh();
++  }, nextRefreshDelay());
++}
++
+ async function boot() {
+   applyDailyTheme();
+   scrollspy();
+@@ -1005,6 +1342,16 @@ async function boot() {
+   safe(renderFixtures, '/api/fixtures.json', '#mcList');
+   safe(renderBracket, '/api/bracket.json', '#bracket');
+   safe(renderGroups, '/api/groupadv.json', '#groupsGrid');
++  // Groups Prediction <-> Reality toggle (prediction = adv% + model order;
++  // reality = real table sorted by points/GD with recent form).
++  (function setupGroupsMode() {
++    const gp = $('#grpPred'), gr = $('#grpReal');
++    if (!gp || !gr) return;
++    const set = m => { STATE.groupsMode = m; gp.classList.toggle('on', m === 'pred');
++      gr.classList.toggle('on', m === 'real'); if (STATE.groupadv) renderGroups(STATE.groupadv); };
++    gp.addEventListener('click', () => set('pred'));
++    gr.addEventListener('click', () => set('real'));
++  })();
+   safe(renderRankings, '/api/rankings.json', '#rankBoard');
+   safe(renderNews, '/api/news.json', '#clippings');
+   renderWhole();                                   // page 01 — the mural funnel (self-fetches + caches)
+@@ -1012,18 +1359,52 @@ async function boot() {
+   // Open the canonical team profile from any nation marked .profile-link[data-team]
+   // (mural nodes, odds rows, group rows, pulse). Delegated so it survives re-renders.
+   // rank-cards carry data-team too but NOT .profile-link, so their expand stays intact.
+-  const openFromEl = el => { const t = el && el.closest && el.closest('.profile-link[data-team]'); if (t) openProfile(t.getAttribute('data-team')); };
+-  document.addEventListener('click', e => openFromEl(e.target));
++  // Profile card wiring: hover-to-preview (fine pointers only) + click/tap-to-pin.
++  // Delegated so it survives every re-render. Rank-cards carry data-team but NOT
++  // .profile-link, so their expand-trajectory behaviour stays intact.
++  const linkOf = el => el && el.closest && el.closest('.profile-link[data-team]');
++  document.addEventListener('click', e => {
++    if (e.target.closest && e.target.closest('#profileCard')) return;          // clicks inside the card
++    const link = linkOf(e.target);
++    if (link) showProfile(link.getAttribute('data-team'), link, true);         // pin on click / tap
++    else if (_pf.pinned) closeProfile();                                       // click-away dismisses
++  });
+   document.addEventListener('keydown', e => {
+-    if ((e.key === 'Enter' || e.key === ' ') && e.target.closest && e.target.closest('.profile-link[data-team]')) { e.preventDefault(); openFromEl(e.target); }
++    const link = linkOf(e.target);
++    if ((e.key === 'Enter' || e.key === ' ') && link) { e.preventDefault(); showProfile(link.getAttribute('data-team'), link, true); }
+     if (e.key === 'Escape') closeProfile();
+   });
+   $('#profileClose').addEventListener('click', closeProfile);
+-  $('#profileOverlay').addEventListener('click', e => { if (e.target === $('#profileOverlay')) closeProfile(); });
++  $('#profileScrim').addEventListener('click', closeProfile);
++
++  if (_pfFine()) {                                   // hover preview never runs on touch
++    document.addEventListener('mouseover', e => {
++      if (_pf.pinned) return;
++      const link = linkOf(e.target);
++      if (!link || (e.target.closest && e.target.closest('#profileCard'))) return;
++      clearTimeout(_pf.t);
++      const team = link.getAttribute('data-team');
++      _pf.t = setTimeout(() => { if (!_pf.pinned) showProfile(team, link, false); }, 120);
++    });
++    document.addEventListener('mouseout', e => {
++      if (_pf.pinned) return;
++      const to = e.relatedTarget;
++      if (to && to.closest && (to.closest('#profileCard') || to.closest('.profile-link[data-team]'))) return;
++      clearTimeout(_pf.t);
++      _pf.t = setTimeout(() => hideProfile(false), 200);
++    });
++    const card = $('#profileCard');
++    card.addEventListener('mouseenter', () => clearTimeout(_pf.t));
++    card.addEventListener('mouseleave', () => { if (!_pf.pinned) { clearTimeout(_pf.t); _pf.t = setTimeout(() => hideProfile(false), 200); } });
++  }
++  window.addEventListener('scroll', () => {
++    if (!_pf.team) return;
++    if (_pf.pinned && !_pfSmall()) positionProfile(_pf.anchor);
++    else if (!_pf.pinned) hideProfile(false);
++  }, { passive: true });
++  window.addEventListener('resize', () => { if (_pf.team) positionProfile(_pf.anchor); });
+ 
+-  // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module
+-  // (loaded separately). The legacy Quantum Tactics Lab renderers further down are
+-  // left in place but intentionally no longer wired here.
++  // Page 09 is now "Collapse" — the run game, owned by the collapse.js ES module.
+ 
+   // Match Centre tab switching
+   $$('.mc-tab').forEach(b => b.addEventListener('click', () => {
+@@ -1060,19 +1441,80 @@ async function boot() {
+     }
+   });
+ 
+-  // live refresh
++  // manual refresh — same smooth in-place path as the auto-poll, plus the
++  // rankings + meta which don't ride the live loop. Re-arms the adaptive timer.
+   $('#livePill').addEventListener('click', async () => {
+     toast('pulling the latest model output…');
+-    safe(renderOdds, '/api/report.json'); safe(renderFixtures, '/api/fixtures.json');
+-    safe(renderBracket, '/api/bracket.json');
+-    safe(renderGroups, '/api/groupadv.json'); safe(renderRankings, '/api/rankings.json');
+-    safe(renderNews, '/api/news.json');
+-    STATE.report = null; _WHOLE = null; renderWhole();      // rebuild the mural from fresh feeds
++    await softRefresh(false);
++    safe(renderRankings, '/api/rankings.json');
+     const meta = await API('/api/meta.json').catch(() => null);
+     if (meta) { renderMeta(meta); renderMethod(meta); }
+-    setTimeout(() => toast('album refreshed ⚽'), 600);
++    scheduleRefresh();
++    setTimeout(() => toast('album refreshed ⚽'), 500);
+   });
+ 
++  // start the per-second clock for live minutes / countdowns + the adaptive
++  // background refresh, and catch up immediately whenever the tab regains focus.
++  startLiveTicker();
++  scheduleRefresh();
++  document.addEventListener('visibilitychange', () => {
++    if (!document.hidden) { softRefresh(false); scheduleRefresh(); }
++  });
++
++  // ---- 3D Overview · Phase 2 (visible 2D<->3D toggle · remembered · opt-in) ----
++  // Default stays the 2D mural. The toggle appears only when WebGL is available;
++  // choosing 3D loads Three.js (cdnjs, allowed in CSP) and mounts overview3d.js into its own
++  // container (the mural DOM is preserved), remembered via localStorage. ?overview3d=1 forces 3D.
++  (function setupOverview3D() {
++    const sw = $('#ovSwitch'), b2 = $('#ov2d'), b3 = $('#ov3d');
++    const mural = $('#mural'), mountEl = $('#overview3dMount');
++    if (!sw || !mountEl || !mural || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
++    let webgl = false;
++    try { const probe = document.createElement('canvas');
++      webgl = !!(probe.getContext('webgl') || probe.getContext('experimental-webgl')); } catch (e) {}
++    if (!webgl) return;  // no WebGL -> 2D only
++    sw.hidden = false;
++    let inst = null, loadingThree = null;
++    const loadThree = () => window.THREE ? Promise.resolve()
++      : (loadingThree || (loadingThree = new Promise((res, rej) => {
++          const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js'; s.onload = res; s.onerror = rej;
++          document.head.appendChild(s);
++        })));
++    async function to3D() {
++      try {
++        await loadThree();
++        const mod = await import('/overview3d.js');
++        if (!mod.overview3DAvailable()) throw new Error('no-3d');
++        await ensureData();
++        mountEl.hidden = false;                       // show the canvas; keep the mural until 3D renders a frame
++        inst = mod.initOverview3D(mountEl,
++          { groupadv: STATE.groupadv, report: STATE.report, bracket: STATE.bracket, fixtures: STATE.fixtures },
++          t => showProfile(t, $('#main') || document.body, true),
++          { onReady() { mural.style.display = 'none'; b3.classList.add('on'); b2.classList.remove('on');
++              try { localStorage.setItem('wcpa_ov3d', '1'); } catch (e) {} },
++            onError() { to2D(); } });
++        if (!inst) throw new Error('init-failed');
++      } catch (e) { to2D(); }   // any failure -> the 2D mural stays / returns
++    }
++    function to2D() {
++      if (inst && inst.destroy) inst.destroy(); inst = null;
++      mountEl.hidden = true; mural.style.display = '';
++      b2.classList.add('on'); b3.classList.remove('on');
++      try { localStorage.setItem('wcpa_ov3d', '0'); } catch (e) {}
++    }
++    b3.addEventListener('click', to3D); b2.addEventListener('click', to2D);
++    let pref = null; try { pref = localStorage.getItem('wcpa_ov3d'); } catch (e) {}
++    const q = new URLSearchParams(location.search).get('overview3d');
++    // Phase 4: 3D is the default on capable desktops (WebGL + decent specs, not
++    // reduced-motion); mobile / small / low-power keep the 2D mural by default.
++    // The choice is remembered, and ?overview3d=0 / 1 forces it either way.
++    const capable = innerWidth >= 760
++      && !((navigator.deviceMemory && navigator.deviceMemory < 4)
++           || (navigator.hardwareConcurrency && navigator.hardwareConcurrency < 4));
++    if (q === '0' || pref === '0') { /* stay on the 2D mural */ }
++    else if (q === '1' || pref === '1' || capable) to3D();
++  })();
++
+   // ?solo=<section> renders just one page (used for single-section captures /
+   // shareable crops); otherwise honour a #hash deep-link once content exists.
+   const solo = new URLSearchParams(location.search).get('solo');
+diff --git a/viz/static/index.html b/viz/static/index.html
+index 6faf51d..3876d0b 100644
+--- a/viz/static/index.html
++++ b/viz/static/index.html
+@@ -2,7 +2,7 @@
+ <html lang="en">
+ <head>
+   <meta charset="utf-8" />
+-  <meta name="viewport" content="width=device-width, initial-scale=1" />
++  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+   <title>WCPA — World Cup 2026 Prediction Album</title>
+   <meta name="description" content="WCPA — the World Cup Prediction Album — calls every match of the 2026 FIFA World Cup with a model backtested on 49,000+ internationals: title odds, the full wallchart and the likeliest score for every game, laid out like a retro sticker album. For entertainment, not betting advice." />
+   <link rel="canonical" href="https://wcpa26.com/" />
+@@ -49,15 +49,15 @@
+       </span>
+     </a>
+     <nav class="album-index" id="albumIndex" aria-label="Album sections">
+-      <a href="#whole">The&nbsp;Whole</a>
+-      <a href="#rankings">Rankings</a>
+-      <a href="#lab">Match&nbsp;Lab</a>
+-      <a href="#tactics">Collapse</a>
++      <a href="#whole">Overview</a>
+       <a href="#groups">Groups</a>
+       <a href="#path">Bracket</a>
+-      <a href="#odds">Odds</a>
++      <a href="#odds">Match&nbsp;Odds</a>
++      <a href="#lab">Match&nbsp;Lab</a>
++      <a href="#tactics">Collapse</a>
+       <a href="#intel">Intel</a>
+       <a href="#method">Method</a>
++      <a href="#rankings">Rankings</a>
+     </nav>
+     <div class="topbar-actions">
+       <time class="world-clock" id="worldClock" aria-hidden="true">
+@@ -103,9 +103,13 @@
+     <section id="whole" class="page whole">
+       <div class="page-head">
+         <span class="page-no">01</span>
+-        <h2>The Whole</h2>
++        <h2>Overview</h2>
+         <p class="page-tag">The entire 2026 World Cup as one living mural — the 48 funnelling to one. Every number is the model's; tap any nation to open its profile.</p>
+       </div>
++      <div class="ov-switch" id="ovSwitch" hidden>
++        <button class="ov-btn on" id="ov2d" type="button">2D mural</button>
++        <button class="ov-btn" id="ov3d" type="button">3D stage</button>
++      </div>
+       <div class="mural" id="mural">
+         <div class="pulse" id="muralPulse" aria-label="Live pulse"></div>
+         <div class="mural-body">
+@@ -116,22 +120,57 @@
+         <div class="marginalia" id="muralIntel" aria-label="Latest intel"></div>
+         <p class="loading" id="muralLoading">assembling the whole tournament…</p>
+       </div>
++      <div class="overview3d-mount" id="overview3dMount" hidden></div>
+     </section>
+ 
+-    <!-- ========================= 02 · RANKINGS ========================= -->
+-    <section id="rankings" class="page">
++    <!-- =========================== 05 · GROUPS =========================== -->
++    <section id="groups" class="page">
+       <div class="page-head">
+         <span class="page-no">02</span>
+-        <h2>Power Rankings</h2>
+-        <p class="page-tag">Live international Elo (active sides). Tap a sticker to open the nation's profile and unfurl its rating trajectory.</p>
++        <h2>Group Pages</h2>
++        <p class="page-tag">All twelve groups. <b>Adv%</b> = chance of reaching the knockouts (top-2 or one of the 8 best 3rd-placed). Tap a nation for its profile.</p>
+       </div>
+-      <div class="rank-board" id="rankBoard"></div>
++      <div class="grp-mode" id="grpMode">
++        <button class="grp-btn on" id="grpPred" type="button">Prediction</button>
++        <button class="grp-btn" id="grpReal" type="button">Reality</button>
++      </div>
++      <div class="groups-grid" id="groupsGrid"></div>
++    </section>
++
++    <!-- ================= 06 · BRACKET + MATCHES (combined) ================= -->
++    <section id="path" class="page">
++      <div class="page-head">
++        <span class="page-no">03</span>
++        <h2>Bracket &amp; Matches</h2>
++        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
++      </div>
++      <div class="bracket-scroll">
++        <div class="bracket" id="bracket"></div>
++      </div>
++      <p class="page-foot" id="bracketNote"></p>
++      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
++        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="true" aria-controls="mcList">Upcoming</button>
++        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
++      </div>
++      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
++    </section>
++
++    <!-- ========================= 07 · TITLE ODDS ========================= -->
++    <section id="odds" class="page">
++      <div class="page-head">
++        <span class="page-no">04</span>
++        <h2>Who Lifts It?</h2>
++        <p class="page-tag">Champion probability — <span id="oddsRuns">50,000</span> Monte-Carlo tournaments over the official bracket.</p>
++      </div>
++      <div class="podium" id="podium"></div>
++      <div class="odds-list" id="oddsList"></div>
++      <p class="page-foot">Bars show title odds; the small pips are the road to the final — <b>QF · SF · F · 🏆</b>. <span id="oddsFresh" class="fresh"></span></p>
+     </section>
+ 
+     <!-- ========================= 03 · MATCH LAB ========================= -->
+     <section id="lab" class="page">
+       <div class="page-head">
+-        <span class="page-no">03</span>
++        <span class="page-no">05</span>
+         <h2>Match Lab</h2>
+         <p class="page-tag">Pick any two of the 48. The ensemble returns win/draw/win, expected goals and the most-likely scoreline — a neutral-venue tale of the tape.</p>
+       </div>
+@@ -155,7 +194,7 @@
+     <!-- ====================== 04 · COLLAPSE — THE QUANTUM RUN ====================== -->
+     <section id="tactics" class="page">
+       <div class="page-head">
+-        <span class="page-no">04</span>
++        <span class="page-no">06</span>
+         <h2>Collapse</h2>
+         <p class="page-tag">One nation, every timeline. Pick a side and run it through the 2026 tournament — before each match, set your <b>quantum state</b> (operators that tilt the model's scoreline distribution), then collapse the superposition to a single result. Win and advance; lose and the timeline ends. <span class="adlabel">original quantum lens · flags public-domain · no club marks</span></p>
+       </div>
+@@ -166,50 +205,10 @@
+       <p class="page-foot">Operators are honest parameter transforms on the bivariate-Poisson goal rates — the quantum names describe exactly what they do to the odds (shown before→after). The <b>Daily Challenge</b> is one shared, frozen timeline ranked on the global board; <b>Free Play</b> re-rolls the field every run. λ (lambda) is the entanglement independent models miss.</p>
+     </section>
+ 
+-    <!-- =========================== 05 · GROUPS =========================== -->
+-    <section id="groups" class="page">
+-      <div class="page-head">
+-        <span class="page-no">05</span>
+-        <h2>Group Pages</h2>
+-        <p class="page-tag">All twelve groups. <b>Adv%</b> = chance of reaching the knockouts (top-2 or one of the 8 best 3rd-placed). Tap a nation for its profile.</p>
+-      </div>
+-      <div class="groups-grid" id="groupsGrid"></div>
+-    </section>
+-
+-    <!-- ================= 06 · BRACKET + MATCHES (combined) ================= -->
+-    <section id="path" class="page">
+-      <div class="page-head">
+-        <span class="page-no">06</span>
+-        <h2>Bracket &amp; Matches</h2>
+-        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
+-      </div>
+-      <div class="bracket-scroll">
+-        <div class="bracket" id="bracket"></div>
+-      </div>
+-      <p class="page-foot" id="bracketNote"></p>
+-      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
+-        <button class="mc-tab active" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="true" aria-controls="mcList">Upcoming</button>
+-        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
+-      </div>
+-      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
+-    </section>
+-
+-    <!-- ========================= 07 · TITLE ODDS ========================= -->
+-    <section id="odds" class="page">
+-      <div class="page-head">
+-        <span class="page-no">07</span>
+-        <h2>Who Lifts It?</h2>
+-        <p class="page-tag">Champion probability — <span id="oddsRuns">50,000</span> Monte-Carlo tournaments over the official bracket.</p>
+-      </div>
+-      <div class="podium" id="podium"></div>
+-      <div class="odds-list" id="oddsList"></div>
+-      <p class="page-foot">Bars show title odds; the small pips are the road to the final — <b>QF · SF · F · 🏆</b>. <span id="oddsFresh" class="fresh"></span></p>
+-    </section>
+-
+     <!-- =========================== 08 · INTEL =========================== -->
+     <section id="intel" class="page">
+       <div class="page-head">
+-        <span class="page-no">08</span>
++        <span class="page-no">07</span>
+         <h2>Team Intel</h2>
+         <p class="page-tag">Live RSS clippings auto-tagged by nation and flagged: <b>injury · suspension · lineup · form · transfer · manager</b>.</p>
+       </div>
+@@ -222,13 +221,23 @@
+     <!-- =========================== 09 · METHOD =========================== -->
+     <section id="method" class="page">
+       <div class="page-head">
+-        <span class="page-no">09</span>
++        <span class="page-no">08</span>
+         <h2>The Method</h2>
+         <p class="page-tag">Not just plausible — measured. Leakage-free walk-forward over ~8,000 held-out internationals.</p>
+       </div>
+       <div class="method" id="method"></div>
+     </section>
+ 
++    <!-- ========================= 02 · RANKINGS ========================= -->
++    <section id="rankings" class="page">
++      <div class="page-head">
++        <span class="page-no">09</span>
++        <h2>Power Rankings</h2>
++        <p class="page-tag">Live international Elo (active sides). Tap a sticker to open the nation's profile and unfurl its rating trajectory.</p>
++      </div>
++      <div class="rank-board" id="rankBoard"></div>
++    </section>
++
+     <!-- ===================== BACK COVER · support ===================== -->
+     <section id="backcover" class="page backcover">
+       <div class="page-head">
+@@ -265,14 +274,13 @@
+ 
+   <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+ 
+-  <!-- Shared national-team profile — one canonical detail view, opened from any
+-       nation anywhere (mural, rankings, groups, intel, bracket). Keeps per-team
+-       detail in ONE place instead of repeating it across pages. -->
+-  <div class="profile-overlay" id="profileOverlay" hidden>
+-    <div class="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profileName" id="profileModal">
+-      <button class="profile-close" id="profileClose" type="button" aria-label="Close profile">✕</button>
+-      <div class="profile-body" id="profileBody"></div>
+-    </div>
++  <!-- Shared 2026 World Cup national-team profile — one condensed card opened from
++       any nation (mural, rankings, groups, intel, bracket): hover-preview + click
++       to pin on desktop, a tap-driven bottom sheet on touch / small screens. -->
++  <div class="pf-scrim" id="profileScrim" hidden></div>
++  <div class="pf-card" id="profileCard" role="dialog" aria-labelledby="profileName" hidden>
++    <button class="pf-close" id="profileClose" type="button" aria-label="Close profile">✕</button>
++    <div class="pf-card-body" id="profileCardBody"></div>
+   </div>
+ 
+   <script src="/app.js" defer></script>
+diff --git a/viz/static/overview3d.js b/viz/static/overview3d.js
+new file mode 100644
+index 0000000..859583a
+--- /dev/null
++++ b/viz/static/overview3d.js
+@@ -0,0 +1,240 @@
++/* =====================================================================
++   WCPA · 3D OVERVIEW  (feature module — progressive enhancement)
++   Navigable Three.js cascade of the tournament (Group 48 -> Champion 1) wired
++   to the real feeds. Phase 3: data-honest **Sankey ribbons** between stages
++   (width proportional to each team's probability of reaching the next stage —
++   group adv% then the road-to-final probs), nodes scaled by title odds, the
++   champion's route in gold. Self-guarding; mounts into a dedicated container so
++   the 2D mural stays as the fallback; destroy() tears down listeners + GPU.
++   Enable: host three.min.js r128 same-origin in viz/static. Flags from flagcdn
++   (CORS) with a coded colour-tile fallback.
++   ===================================================================== */
++'use strict';
++
++const GOLD = 0xe3a512, GOLDHI = 0xf2c33b, INK = 0x0e0c0a;
++function hexToRgb(h) { h = (h || '#5a6b86').replace('#', ''); if (h.length === 3) h = h.split('').map(x => x + x).join('');
++  const n = parseInt(h, 16) || 0; return [(n >> 16 & 255) / 255, (n >> 8 & 255) / 255, (n & 255) / 255]; }
++
++export function overview3DAvailable() {
++  if (typeof window === 'undefined' || !window.THREE) return false;
++  try { const c = document.createElement('canvas');
++    return !!(c.getContext('webgl') || c.getContext('experimental-webgl')); }
++  catch (e) { return false; }
++}
++
++export function initOverview3D(mount, data, onPick, hooks) {
++  if (!overview3DAvailable() || !mount) return null;
++  const THREE = window.THREE;
++
++  // ---- derive cascade + probability lookups from REAL feeds ----
++  const odds = (data.report && data.report.title_odds) || [];
++  const ranked = odds.map(o => o.team), oddsOf = {}, ROAD = {};
++  odds.forEach(o => { oddsOf[o.team] = o.p_win; ROAD[o.team] = { pw: o.p_win, pq: o.p_quarter, ps: o.p_semi, pf: o.p_final }; });
++  const ga = data.groupadv || {};
++  const groups = Object.keys(ga).sort().map(k => ({ name: k, teams: ga[k] }));
++  const flagOf = {}, isoOf = {}, ccOf = {}, ADV = {};
++  const note = c => { if (!c || !c.team) return; if (c.flag) flagOf[c.team] = c.flag;
++    if (c.iso2) isoOf[c.team] = c.iso2; if (c.confed_color) ccOf[c.team] = c.confed_color; };
++  groups.forEach(g => g.teams.forEach(t => { note(t); ADV[t.team] = (t.adv || 0) / 100; }));
++  odds.forEach(note);
++  const B = data.bracket || {}, R = B.rounds || {};
++  const both = ties => (ties || []).flatMap(t => [t.a, t.b]).filter(Boolean);
++  const winners = ties => (ties || []).map(t => (t.winner === t.a.team ? t.a : t.b)).filter(Boolean);
++  (B.r32 || []).forEach(t => { note(t.a); note(t.b); });
++  Object.values(R).forEach(rd => (rd || []).forEach(t => { note(t.a); note(t.b); }));
++  const champCard = (() => { const f = R.sf ? winners(R.sf) : [];
++    if (f.length === 2) return (oddsOf[f[0].team] ?? -1) >= (oddsOf[f[1].team] ?? -1) ? f[0] : f[1];
++    return B.champion || (ranked[0] && { team: ranked[0] }) || {}; })();
++  const champ = champCard && champCard.team;
++
++  const STAGES = [
++    { key: 'GROUP', label: 'Group stage', cards: groups.flatMap(g => g.teams) },
++    { key: 'R32', label: 'Round of 32', cards: both(B.r32) },
++    { key: 'R16', label: 'Round of 16', cards: winners(B.r32) },
++    { key: 'QF', label: 'Quarter-finals', cards: winners(R.r16).length ? winners(R.r16) : both(R.qf) },
++    { key: 'SF', label: 'Semi-finals', cards: both(R.sf) },
++    { key: 'FINAL', label: 'Final', cards: both(R.final) },
++    { key: 'CHAMP', label: 'Champion', cards: [champCard] },
++  ].filter(s => s.cards.length);
++
++  const oddsScale = team => Math.max(0.9, Math.min(1.18, 0.92 + (oddsOf[team] || 0) * 2.5));
++  const reachProb = (team, key) => { const r = ROAD[team] || {};
++    if (key === 'R32' || key === 'R16') return ADV[team] ?? 0.2;
++    if (key === 'QF') return r.pq ?? 0.1; if (key === 'SF') return r.ps ?? 0.06;
++    if (key === 'FINAL') return r.pf ?? 0.04; if (key === 'CHAMP') return r.pw ?? 0.02; return 0.1; };
++
++  // ---- renderer / scene ----
++  const canvas = document.createElement('canvas');
++  canvas.style.cssText = 'display:block;width:100%;height:100%;cursor:grab;outline:none';
++  canvas.setAttribute('tabindex', '0'); canvas.setAttribute('role', 'application');
++  canvas.setAttribute('aria-label', '3D tournament cascade. Arrow keys change stage; W A S D move; drag to look.');
++  mount.innerHTML = ''; mount.appendChild(canvas);
++  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
++  renderer.setClearColor(INK, 1);
++  const scene = new THREE.Scene(); scene.fog = new THREE.FogExp2(INK, 0.008);
++  const camera = new THREE.PerspectiveCamera(55, 2, 0.1, 1000);
++  scene.add(new THREE.AmbientLight(0xccd4e2, 0.95));
++  const klight = new THREE.PointLight(0xffe7a8, 1.2, 800); klight.position.set(30, 70, 90); scene.add(klight);
++  const loader = new THREE.TextureLoader(); loader.setCrossOrigin('anonymous');
++  const disposables = [], geoCache = {};
++  const planeGeo = (w, h) => geoCache[w + 'x' + h] || (geoCache[w + 'x' + h] = (g => (disposables.push(g), g))(new THREE.PlaneGeometry(w, h)));
++
++  function fallbackTex(team) {
++    const c = document.createElement('canvas'); c.width = 160; c.height = 104;
++    const g = c.getContext('2d'); g.fillStyle = ccOf[team] || '#3a3630'; g.fillRect(0, 0, 160, 104);
++    g.fillStyle = 'rgba(0,0,0,.32)'; g.fillRect(0, 72, 160, 32);
++    g.fillStyle = '#f0e2c2'; g.font = 'bold 26px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
++    g.fillText((isoOf[team] || team.slice(0, 3)).toUpperCase(), 80, 88);
++    g.strokeStyle = 'rgba(227,165,18,.85)'; g.lineWidth = 6; g.strokeRect(3, 3, 154, 98);
++    const t = new THREE.CanvasTexture(c); disposables.push(t); return t;
++  }
++  function flagMat(card) {
++    const m = new THREE.MeshBasicMaterial({ map: fallbackTex(card.team), side: THREE.DoubleSide, transparent: true });
++    const url = flagOf[card.team];
++    if (url) loader.load(url, t => { m.map = t; m.needsUpdate = true; disposables.push(t); }, undefined, () => {});
++    disposables.push(m); return m;
++  }
++  const setScale = (mesh, mult) => { const b = mesh.userData.baseScale || 1; mesh.scale.set(b * mult, b * mult, 1); };
++
++  const DEPTH = 48, tiles = [], stageFlags = [], nodePos = STAGES.map(() => ({}));
++  STAGES.forEach((st, s) => {
++    const arr = []; stageFlags.push(arr);
++    const n = st.cards.length, cols = Math.min(8, Math.max(1, n)), rows = Math.ceil(n / cols), zB = -s * DEPTH;
++    const big = n <= 4, w = big ? 6.4 : 5, h = big ? 4 : 3.1, gx = w + 1.6, gy = h + 1.6;
++    const sx = -(cols - 1) * gx / 2, sy = 9 + (rows - 1) * gy / 2;
++    st.cards.forEach((card, j) => {
++      const col = j % cols, row = Math.floor(j / cols);
++      const mesh = new THREE.Mesh(planeGeo(w, h), flagMat(card));
++      mesh.position.set(sx + col * gx, sy - row * gy, zB);
++      const bsc = oddsScale(card.team); mesh.scale.set(bsc, bsc, 1);
++      mesh.userData = { team: card.team, stage: s, baseScale: bsc };
++      scene.add(mesh); tiles.push(mesh); arr.push(mesh);
++      nodePos[s][card.team] = mesh.position.clone();
++    });
++  });
++
++  // ---- Sankey ribbons (one merged geometry; width ∝ reach probability) ----
++  let ribbons = null;
++  (function buildRibbons() {
++    const pos = [], col = [], up = new THREE.Vector3(0, 1, 0), d = new THREE.Vector3(), p = new THREE.Vector3();
++    const gold = [0.95, 0.76, 0.23];
++    function quad(A, Bv, wdt, c) {
++      d.copy(Bv).sub(A); p.crossVectors(d, up).normalize().multiplyScalar(Math.max(0.06, wdt) / 2);
++      const a1 = [A.x - p.x, A.y - p.y, A.z - p.z], a2 = [A.x + p.x, A.y + p.y, A.z + p.z],
++            b2 = [Bv.x + p.x, Bv.y + p.y, Bv.z + p.z], b1 = [Bv.x - p.x, Bv.y - p.y, Bv.z - p.z];
++      pos.push(...a1, ...a2, ...b2, ...a1, ...b2, ...b1); for (let i = 0; i < 6; i++) col.push(...c);
++    }
++    for (let s = 0; s < STAGES.length - 1; s++) {
++      const key = STAGES[s + 1].key;
++      for (const t of Object.keys(nodePos[s])) {
++        if (!nodePos[s + 1][t]) continue;
++        const isCh = champ && t === champ, w = Math.max(0.12, reachProb(t, key) * 7);
++        const c = isCh ? gold : hexToRgb(ccOf[t]).map(v => v * 0.7);
++        quad(nodePos[s][t], nodePos[s + 1][t], isCh ? Math.max(w, 0.7) : w, c);
++      }
++    }
++    if (!pos.length) return;
++    const g = new THREE.BufferGeometry();
++    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
++    g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); disposables.push(g);
++    const m = new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
++    disposables.push(m); ribbons = new THREE.Mesh(g, m); scene.add(ribbons);
++  })();
++
++  // ---- state + free-roam camera ----
++  let cs = 0, mode = 'pred', picked = null, freeCam = false;
++  const cpos = new THREE.Vector3(0, 22, 120); let yaw = 0, pitch = -0.06;
++  const posT = new THREE.Vector3(0, 9, 62); let yawT = 0, pitchT = -0.04;
++  const keys = {};
++  const fwd = () => new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch));
++  function focusStage(i) {
++    cs = Math.max(0, Math.min(STAGES.length - 1, i));
++    posT.set(0, 9, -cs * DEPTH + 18 + Math.min(8, STAGES[cs].cards.length) * 2.4); yawT = 0; pitchT = -0.04; freeCam = false;
++    if (picked && picked.userData.stage !== cs) { setScale(picked, 1); picked = null; }
++    tiles.forEach(f => f.material.opacity = f.userData.stage === cs ? 1 : 0.26);
++    if (ui.title) ui.title.textContent = STAGES[cs].label;
++    [...ui.rail.children].forEach((b, k) => b.classList.toggle('on', k === cs));
++  }
++
++  const ui = buildUI(mount);
++  ui.rail.innerHTML = '';
++  STAGES.forEach((st, i) => { const b = document.createElement('button'); b.className = 'o3d-btn'; b.textContent = st.key;
++    b.title = st.label; b.setAttribute('aria-label', st.label); b.onclick = () => focusStage(i); ui.rail.appendChild(b); });
++  ui.prev.onclick = () => focusStage(cs - 1); ui.next.onclick = () => focusStage(cs + 1);
++  ui.pred.onclick = () => setMode('pred'); ui.real.onclick = () => setMode('real');
++  function setMode(m) { mode = m; ui.pred.classList.toggle('on', m === 'pred'); ui.real.classList.toggle('on', m === 'real');
++    if (ribbons) ribbons.material.opacity = m === 'pred' ? 0.85 : 0.14; }
++
++  // ---- interaction (removable listeners) ----
++  const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
++  let drag = false, px = 0, py = 0, moved = 0;
++  const onDown = e => { drag = true; moved = 0; px = e.clientX; py = e.clientY; };
++  const onMove = e => { if (!drag) return; const dx = e.clientX - px, dy = e.clientY - py;
++    moved += Math.abs(dx) + Math.abs(dy); yaw += dx * 0.004; pitch = Math.max(-1.4, Math.min(1.4, pitch - dy * 0.004));
++    px = e.clientX; py = e.clientY; freeCam = true; };
++  const onUp = e => { if (drag && moved < 6) { const r = canvas.getBoundingClientRect();
++      mouse.x = ((e.clientX - r.left) / r.width) * 2 - 1; mouse.y = -((e.clientY - r.top) / r.height) * 2 + 1;
++      ray.setFromCamera(mouse, camera); const hit = ray.intersectObjects(stageFlags[cs] || [])[0];
++      if (hit) { if (picked) setScale(picked, 1); picked = hit.object; setScale(picked, 1.35);
++        if (onPick) onPick(picked.userData.team, canvas); } } drag = false; };
++  const onWheel = e => { e.preventDefault(); cpos.addScaledVector(fwd(), -e.deltaY * 0.06); freeCam = true; };
++  const onKeyDown = e => { const k = e.key.toLowerCase();
++    if (k === 'arrowright') return focusStage(cs + 1); if (k === 'arrowleft') return focusStage(cs - 1);
++    if ('wasdqe'.indexOf(k) >= 0 || k === 'shift') { keys[k] = true; freeCam = true; } };
++  const onKeyUp = e => { keys[e.key.toLowerCase()] = false; };
++  const onResize = () => { const w = mount.clientWidth || 800, h = mount.clientHeight || 500;
++    renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(w, h, false);
++    camera.aspect = w / h; camera.updateProjectionMatrix(); };
++  canvas.addEventListener('pointerdown', onDown);
++  canvas.addEventListener('pointermove', onMove);
++  canvas.addEventListener('wheel', onWheel, { passive: false });
++  window.addEventListener('pointerup', onUp);
++  window.addEventListener('keydown', onKeyDown);
++  window.addEventListener('keyup', onKeyUp);
++  window.addEventListener('resize', onResize);
++
++  onResize(); focusStage(0); setMode('pred');
++  let raf = 0, alive = true, firstFrame = true;
++  function loop() { if (!alive) return; raf = requestAnimationFrame(loop);
++    const f = fwd(), right = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 1, 0)).normalize();
++    if (freeCam) { const sp = keys['shift'] ? 2 : 1;
++      if (keys['w']) cpos.addScaledVector(f, sp); if (keys['s']) cpos.addScaledVector(f, -sp);
++      if (keys['d']) cpos.addScaledVector(right, sp); if (keys['a']) cpos.addScaledVector(right, -sp);
++      if (keys['e']) cpos.y += sp; if (keys['q']) cpos.y -= sp;
++    } else { cpos.lerp(posT, 0.07); yaw += (yawT - yaw) * 0.07; pitch += (pitchT - pitch) * 0.07; }
++    camera.position.copy(cpos); camera.lookAt(cpos.x + f.x, cpos.y + f.y, cpos.z + f.z);
++    try { renderer.render(scene, camera); }
++    catch (err) { alive = false; if (hooks && hooks.onError) hooks.onError(err); return; }
++    if (firstFrame) { firstFrame = false; if (hooks && hooks.onReady) hooks.onReady(); }
++  }
++  loop();
++
++  return { destroy() {
++    alive = false; cancelAnimationFrame(raf);
++    canvas.removeEventListener('pointerdown', onDown); canvas.removeEventListener('pointermove', onMove);
++    canvas.removeEventListener('wheel', onWheel);
++    window.removeEventListener('pointerup', onUp); window.removeEventListener('keydown', onKeyDown);
++    window.removeEventListener('keyup', onKeyUp); window.removeEventListener('resize', onResize);
++    disposables.forEach(d => { try { d.dispose && d.dispose(); } catch (e) {} });
++    try { renderer.dispose(); } catch (e) {}
++    mount.innerHTML = '';
++  } };
++}
++
++function buildUI(mount) {
++  if (getComputedStyle(mount).position === 'static') mount.style.position = 'relative';
++  const base = 'position:absolute;font-family:inherit;z-index:2;';
++  const title = el('div', base + 'left:14px;top:12px;font-size:15px;color:#fff;');
++  const modes = el('div', base + 'left:50%;top:12px;transform:translateX(-50%);display:inline-flex;background:rgba(20,16,10,.82);border:1px solid #3a3630;border-radius:9px;overflow:hidden;');
++  const pred = btn('Prediction'), real = btn('Reality'); modes.append(pred, real);
++  const bar = el('div', base + 'left:0;right:0;bottom:11px;display:flex;justify-content:center;gap:6px;');
++  const prev = btn('‹'), rail = el('div', 'display:flex;gap:5px;'), next = btn('›');
++  prev.setAttribute('aria-label', 'Previous stage'); next.setAttribute('aria-label', 'Next stage');
++  bar.append(prev, rail, next);
++  const style = document.createElement('style');
++  style.textContent = '.o3d-btn{cursor:pointer;border:1px solid #3a3630;border-radius:8px;padding:6px 10px;font-size:12px;background:#1c1a17;color:#cdbf9f;font-family:inherit}.o3d-btn.on{background:#e3a512;color:#1c1407;border-color:#e3a512}';
++  mount.append(style, title, modes, bar);
++  return { title, rail, prev, next, pred, real };
++  function el(tag, s) { const e = document.createElement(tag); e.style.cssText = s; return e; }
++  function btn(t) { const b = document.createElement('button'); b.className = 'o3d-btn'; b.textContent = t; return b; }
++}
+diff --git a/viz/static/style.css b/viz/static/style.css
+index 6319515..7a5e9e5 100644
+--- a/viz/static/style.css
++++ b/viz/static/style.css
+@@ -455,7 +455,50 @@ a { color: inherit; }
+   color: var(--gold-deep); margin-bottom: 8px;
+ }
+ .cover-imprint span { color: var(--ink-soft); letter-spacing: 3px; }
+-.cover-kickoff { margin: 4px 0 22px; display: flex; justify-content: center; }
++.cover-kickoff { margin: 4px 0 10px; display: flex; justify-content: center; }
++
++/* next match widget on the cover */
++.cover-next-game { margin: 0 auto 22px; }
++.cover-ng {
++  display: inline-flex; flex-direction: column; align-items: center; gap: 4px;
++  background: rgba(255,255,255,.04); border: 1.5px solid var(--card-edge);
++  border-radius: 10px; padding: 10px 22px; text-align: center;
++}
++.ng-label {
++  font-family: var(--font-badge); font-size: .62rem; letter-spacing: 3px;
++  color: var(--terra); margin-bottom: 2px;
++}
++.ng-teams {
++  display: flex; align-items: center; gap: 10px;
++  font-family: var(--font-lab); font-size: .95rem; letter-spacing: .5px; color: var(--ink);
++}
++.ng-side { display: flex; align-items: center; gap: 5px; }
++.ng-vs { color: var(--ink-soft); font-size: .78rem; }
++.ng-kick { font-family: var(--font-badge); font-size: .72rem; color: var(--ink-soft); letter-spacing: 1px; }
++.ng-kick small { letter-spacing: .5px; }
++.ng-cd {
++  font-family: var(--font-badge); font-size: 1.35rem; letter-spacing: 3px;
++  color: var(--gold); font-variant-numeric: tabular-nums;
++}
++
++/* bug banner — The Panorama */
++.bug-banner {
++  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
++  margin-bottom: 22px; padding: 10px 16px;
++  background: repeating-linear-gradient(
++    -45deg,
++    rgba(255,180,0,.08) 0px, rgba(255,180,0,.08) 8px,
++    transparent 8px, transparent 16px
++  );
++  border: 2px solid rgba(255,180,0,.35); border-radius: 8px;
++  font-family: var(--font-body); font-size: .88rem; color: var(--ink-soft);
++}
++.bug-pill {
++  font-family: var(--font-badge); font-size: .7rem; letter-spacing: 1.5px;
++  background: rgba(255,180,0,.18); color: #f0b429;
++  border: 1.5px solid rgba(255,180,0,.4); border-radius: 4px;
++  padding: 3px 9px; white-space: nowrap; flex-shrink: 0;
++}
+ .kickoff-badge {
+   font-family: var(--font-lab); letter-spacing: 2.5px; font-size: 1rem;
+   background: var(--card-edge); color: var(--paper);
+@@ -479,7 +522,7 @@ a { color: inherit; }
+ 
+ /* ---- cover promo: "coming soon" foil sticker for the Quantum Tactics Lab ---- */
+ .cover-promo {
+-  position: absolute; top: 96px; right: 26px; z-index: 6;
++  position: absolute; bottom: 90px; right: 26px; z-index: 6;
+   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+   width: 205px; padding: 13px 15px; cursor: pointer; text-align: left;
+   font-family: var(--font-lab); color: var(--paper);
+@@ -745,110 +788,7 @@ main > section.page:not(.backcover) .sticker {
+ /* the teaser is now live — its CTA reads "Open the Lab" and links to #tactics */
+ .cover-promo.live .cp-flash { background: var(--teal); color: #07130f; }
+ 
+-/* ====================== QUANTUM TACTICS LAB ====================== */
+-.tac { display: flex; flex-direction: column; gap: 16px; }
+-.tac-pickbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+-#tacPick {
+-  font-family: var(--font-lab); font-size: 1rem; padding: 10px 14px;
+-  background: var(--surface-2); color: var(--ink);
+-  border: 2.5px solid var(--card-edge); border-radius: 9px; min-width: 280px; cursor: pointer;
+-}
+-.tac-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+-.tac-badge {
+-  font-family: var(--font-badge); font-size: .72rem; letter-spacing: .5px;
+-  padding: 4px 9px; border-radius: 20px; border: 2px solid var(--card-edge);
+-  background: var(--surface-2); color: var(--ink-soft); text-transform: uppercase;
+-}
+-.tac-badge.cv     { color: var(--teal);  border-color: var(--teal); }
+-.tac-badge.ent    { color: var(--gold);  border-color: var(--gold-deep); }
+-.tac-badge.live   { color: var(--terra); border-color: var(--terra); }
+-.tac-badge.done   { color: #07130f; background: var(--teal); border-color: var(--teal); }
+-.tac-badge.soon   { color: var(--gold-deep); border-color: var(--gold-deep); }
+-
+-.tac-grid-wrap { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+-@media (max-width: 860px) { .tac-grid-wrap { grid-template-columns: 1fr; } }
+-
+-/* ---- left: video-like board ---- */
+-.tac-board { padding: 14px; }
+-.tac-board-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+-.tac-board-title { font-family: var(--font-lab); letter-spacing: 1px; color: var(--ink); font-size: .95rem; }
+-.tac-layers { display: flex; align-items: center; gap: 8px; font-family: var(--font-badge); font-size: .78rem; color: var(--ink-soft); }
+-.tac-form { color: var(--accent); font-size: 1rem; }
+-.tac-form.away { color: var(--terra); }
+-.tac-vs { color: var(--ink-soft); }
+-.tac-frames { color: var(--ink-soft); font-size: .72rem; }
+-
+-.tac-pitch-wrap { border-radius: 10px; overflow: hidden; border: 2.5px solid var(--card-edge); }
+-.tac-pitch { display: block; width: 100%; height: auto; background: #14361f; }
+-.tp-grass { fill: #1a5130; }
+-.tp-line { stroke: rgba(255,255,255,.45); stroke-width: .4; }
+-.tp-dot { stroke: rgba(0,0,0,.5); stroke-width: .25; }
+-.tp-dot.home { fill: var(--accent); }
+-.tp-dot.away { fill: var(--terra); }
+-.tp-ball-trail { fill: rgba(255,255,255,.35); }
+-.tp-ball { fill: #fff; stroke: #14361f; stroke-width: .3; }
+-.tp-empty { fill: rgba(255,255,255,.7); font-family: 'Space Grotesk', sans-serif; font-size: 3.4px; }
+-.tp-empty.sm { fill: rgba(255,255,255,.5); font-size: 2.2px; }
+-
+-.tac-scrub { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+-.tac-play {
+-  flex: none; width: 40px; height: 40px; border-radius: 50%;
+-  background: var(--gold); color: #20150c; border: 2.5px solid var(--card-edge);
+-  font-size: 1rem; cursor: pointer; display: grid; place-items: center;
+-}
+-.tac-play:hover { filter: brightness(1.08); }
+-#tacRange { flex: 1; accent-color: var(--gold); cursor: pointer; }
+-.tac-clock { font-family: var(--font-badge); color: var(--ink); min-width: 38px; text-align: right; }
+-.tac-momentum { margin-top: 10px; }
+-.tac-momentum svg { display: block; width: 100%; height: 90px; }
+-.mo-base { stroke: var(--card-edge); stroke-width: 1; }
+-.mo-home { stroke: var(--accent); stroke-width: 2; }
+-.mo-away { stroke: var(--terra); stroke-width: 2; }
+-.mo-goal { stroke: #fff; stroke-width: 1; }
+-.mo-goal.home { fill: var(--accent); }
+-.mo-goal.away { fill: var(--terra); }
+-.mo-head { stroke: var(--gold); stroke-width: 1.5; stroke-dasharray: 3 3; }
+-
+-/* ---- right: superposition + fingerprint ---- */
+-.tac-side { display: flex; flex-direction: column; gap: 16px; }
+-.tac-sub { font-family: var(--font-lab); letter-spacing: 1px; color: var(--ink); font-size: .9rem; margin-bottom: 8px; text-transform: uppercase; }
+-.tac-super { padding: 14px; }
+-.tac-super-grid { display: block; width: 100%; max-width: 260px; height: auto; margin: 0 auto; }
+-.sg-cell { stroke: var(--card-edge); stroke-width: .5; }
+-.sg-cell.actual { stroke: var(--gold); }
+-.sg-actual-ring { stroke: var(--gold); stroke-width: 2.5; }
+-.sg-ax { fill: var(--ink-soft); font-family: var(--font-badge); font-size: 9px; }
+-.tac-super-note { color: var(--ink-soft); font-size: .82rem; margin-top: 10px; line-height: 1.4; }
+-.tac-super-note b { color: var(--gold); }
+-
+-.tac-fp { padding: 14px; }
+-.fp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+-@media (max-width: 420px) { .fp-grid { grid-template-columns: 1fr; } }
+-.fp-name { font-family: var(--font-lab); color: var(--ink); font-size: .85rem; margin-bottom: 7px; letter-spacing: .5px; }
+-.fp-row { display: grid; grid-template-columns: 58px 1fr 26px; align-items: center; gap: 7px; margin-bottom: 6px; }
+-.fp-k { font-size: .72rem; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .5px; }
+-.fp-bar { height: 9px; background: var(--surface-2); border: 1.5px solid var(--card-edge); border-radius: 3px; overflow: hidden; }
+-.fp-bar i { display: block; height: 100%; background: var(--gold); }
+-.fp-col:nth-child(2) .fp-bar i { background: var(--terra); }
+-.fp-v { font-family: var(--font-badge); font-size: .78rem; color: var(--ink); text-align: right; }
+-
+-.tac-readout { background: var(--card); border: 2.5px solid var(--card-edge); border-radius: var(--radius); padding: 13px; box-shadow: var(--shadow-sm); }
+-.tac-1x2 { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+-.tac-1x2 .t1 { font-family: var(--font-badge); font-size: .78rem; padding: 5px 9px; border-radius: 6px; border: 2px solid var(--card-edge); }
+-.tac-1x2 .t1.home { color: var(--accent); border-color: var(--accent); }
+-.tac-1x2 .t1.draw { color: var(--ink-soft); }
+-.tac-1x2 .t1.away { color: var(--terra); border-color: var(--terra); }
+-.tac-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+-.tac-stats > div { display: flex; justify-content: space-between; gap: 8px; background: var(--surface-2); border: 1.5px solid var(--card-edge); border-radius: 7px; padding: 7px 10px; }
+-.tac-stats .tl { color: var(--ink-soft); font-size: .78rem; }
+-.tac-stats .tv { font-family: var(--font-badge); color: var(--ink); font-size: .82rem; }
+-.tac-actual { margin-top: 10px; padding: 8px 11px; border-radius: 7px; background: rgba(227,165,18,.12); border: 1.5px solid var(--gold-deep); color: var(--ink); font-size: .85rem; }
+-.tac-actual b { color: var(--gold); }
+-
+-@media (prefers-reduced-motion: reduce) {
+-  .mo-head { stroke-dasharray: none; }
+-  .tac-play { transition: none; }
+-}
++/* (Quantum Tactics Lab CSS removed — that page is now Collapse) */
+ 
+ /* =====================================================================
+    COLLAPSE — the quantum run game (Page 09). Sits inside a cream .page,
+@@ -993,3 +933,311 @@ main > section.page:not(.backcover) .sticker {
+ .cl-ghost { font-family: var(--font-lab); letter-spacing: 1px; font-size: .9rem; cursor: pointer; background: var(--card);
+   color: var(--ink); border: 2.5px solid var(--card-edge); border-radius: 24px; padding: 9px 20px; box-shadow: var(--shadow-sm); }
+ .cl-ghost:hover { transform: translate(-1px,-1px); }
++
++/* =========================================================================
++   PAGE 01 · THE WHOLE — mural funnel styles
++   Three-column layout: groups funnel | knockout river SVG | champion altar
++   ========================================================================= */
++
++/* pulse bar — LAST / NEXT / MODEL strip across the top of the mural */
++.pulse {
++  display: flex; gap: 0; flex-wrap: wrap;
++  background: var(--card); border: 2.5px solid var(--card-edge);
++  border-radius: 10px; margin-bottom: 18px; overflow: hidden;
++}
++.pulse-cell {
++  display: flex; align-items: baseline; gap: 8px;
++  padding: 8px 18px; flex: 1; min-width: 160px;
++  border-right: 1.5px solid var(--card-edge);
++}
++.pulse-cell:last-child { border-right: none; }
++.pulse-k {
++  font-family: var(--font-badge); font-size: .72rem; letter-spacing: 2.5px;
++  color: var(--gold-deep); white-space: nowrap;
++}
++.pulse-v {
++  font-size: .88rem; color: var(--ink); display: flex; align-items: center;
++  gap: 5px; flex-wrap: wrap;
++}
++.pulse-cd {
++  font-family: var(--font-badge); font-size: 1rem; letter-spacing: 1px;
++  color: var(--terra);
++}
++
++/* three-column mural body */
++.mural-body {
++  display: grid;
++  grid-template-columns: 1fr 260px 220px;
++  gap: 16px; align-items: start;
++}
++.mural-col { min-width: 0; }
++/* cap the groups column so river + altar stay visible alongside it */
++.mural-groups { max-height: 680px; overflow-y: auto; padding-right: 4px; }
++.mural-groups::-webkit-scrollbar { width: 4px; }
++.mural-groups::-webkit-scrollbar-track { background: transparent; }
++.mural-groups::-webkit-scrollbar-thumb { background: var(--card-edge); border-radius: 4px; }
++.mural-h {
++  font-family: var(--font-badge); letter-spacing: 2px; font-size: .72rem;
++  color: var(--ink-soft); text-transform: uppercase;
++  margin-bottom: 10px; padding-bottom: 6px;
++  border-bottom: 1.5px solid var(--card-edge);
++}
++
++/* group mini-cards inside the funnel column */
++.mg-card {
++  background: var(--card); border: 2px solid var(--card-edge);
++  border-radius: 8px; padding: 7px 10px; margin-bottom: 8px;
++  box-shadow: var(--shadow-sm);
++}
++.mg-h {
++  font-family: var(--font-badge); font-size: .72rem; letter-spacing: 2px;
++  color: var(--gold-deep); margin-bottom: 4px;
++}
++@keyframes mg-flash {
++  0%   { background: rgba(212,175,55,0);  box-shadow: inset 3px 0 0 rgba(212,175,55,0); }
++  20%  { background: rgba(212,175,55,.18); box-shadow: inset 3px 0 0 rgba(212,175,55,1); border-radius: 4px; }
++  65%  { background: rgba(212,175,55,.08); box-shadow: inset 3px 0 0 rgba(212,175,55,.5); }
++  100% { background: rgba(212,175,55,0);  box-shadow: inset 3px 0 0 rgba(212,175,55,0); }
++}
++@keyframes river-circle-pulse {
++  0%   { r: var(--base-r, 4.5); opacity: 1; }
++  40%  { r: calc(var(--base-r, 4.5) * 2.2); opacity: .7; }
++  100% { r: var(--base-r, 4.5); opacity: 1; }
++}
++@keyframes river-glow {
++  0%,100% { filter: drop-shadow(0 0 0px rgba(212,175,55,0)); }
++  40%      { filter: drop-shadow(0 0 10px rgba(212,175,55,.9)); }
++}
++.mg-row {
++  display: flex; align-items: center; gap: 6px;
++  padding: 3px 0; cursor: pointer;
++}
++.mg-row.flash { animation: mg-flash .7s ease-out forwards; }
++.mg-row.flash .mg-nm { color: var(--gold); }
++.river-node.flash { animation: river-glow .6s ease-out forwards; }
++.river-node.flash circle { transform-box: fill-box; transform-origin: center; animation: river-circle-pulse .6s ease-out forwards; }
++.mg-row:hover .mg-nm { color: var(--gold); }
++.mg-nm {
++  font-family: var(--font-lab); font-size: .92rem; letter-spacing: .4px;
++  color: var(--ink); flex: 1; white-space: nowrap; overflow: hidden;
++  text-overflow: ellipsis;
++}
++.mg-bar {
++  width: 60px; height: 7px; background: var(--surface-2);
++  border-radius: 4px; overflow: hidden; flex-shrink: 0;
++}
++.mg-bar i { display: block; height: 100%; border-radius: 4px; }
++
++/* knockout river SVG */
++.river-svg {
++  width: 100%; height: auto; display: block;
++  overflow: visible;
++}
++.river-node { cursor: pointer; }
++.river-node:hover circle { opacity: .8; }
++.river-node:focus { outline: none; }
++.river-node:focus circle { stroke: var(--gold); stroke-width: 3; }
++.river-lbl { font-family: var(--font-badge); fill: var(--ink-soft); }
++.river-champ {
++  font-family: var(--font-disp); font-size: 14px; fill: var(--gold-deep);
++  font-weight: 400;
++}
++.river-sub { font-family: var(--font-badge); font-size: 8.5px; fill: var(--ink-soft); letter-spacing: 1px; }
++.river-node.lit circle { filter: drop-shadow(0 0 6px var(--accent)); }
++path.lit { filter: drop-shadow(0 0 3px var(--accent)); }
++
++/* champion altar column */
++.altar-champ {
++  text-align: center; padding: 14px 12px 12px; margin-bottom: 12px;
++  cursor: pointer;
++}
++.altar-k {
++  font-family: var(--font-badge); font-size: .68rem; letter-spacing: 2.5px;
++  color: var(--gold-deep); margin-bottom: 6px;
++}
++.altar-nm { font-family: var(--font-disp); font-size: 1.3rem; margin: 6px 0 2px; }
++.altar-win { font-family: var(--font-badge); font-size: 1.6rem; color: var(--terra); }
++.altar-sub { font-size: .78rem; color: var(--ink-soft); }
++.altar-list { display: flex; flex-direction: column; gap: 5px; }
++.altar-row {
++  display: flex; align-items: center; gap: 6px;
++  background: var(--card); border: 1.5px solid var(--card-edge);
++  border-radius: 7px; padding: 5px 8px; cursor: pointer;
++}
++.altar-row:hover { border-color: var(--gold); }
++.ar-rank {
++  font-family: var(--font-badge); font-size: .78rem; color: var(--ink-soft);
++  min-width: 16px;
++}
++.ar-nm {
++  font-family: var(--font-lab); font-
++
++
++/* Intel page: filter row (the rest of the per-page upgrade pack was never
++   wired up, so it has been culled — only this row remains live). */
++.intel-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
++
++
++/* =====================================================================
++   2026 WORLD CUP TEAM PROFILE CARD
++   A condensed national-team card opened from any nation (mural, rankings,
++   odds, groups, intel, bracket). Fine pointers preview it on hover and pin
++   it on click; touch / small screens get a tap-driven bottom sheet. Replaces
++   the old full-page modal — it never dumps content at the page foot again.
++   ===================================================================== */
++body.modal-open { overflow: hidden; }
++
++.pf-scrim { position: fixed; inset: 0; z-index: 59; background: rgba(12,10,8,.6);
++  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
++.pf-scrim[hidden] { display: none; }
++
++.pf-card {
++  position: fixed; z-index: 61; width: 300px; max-width: calc(100vw - 20px);
++  max-height: min(82vh, 470px); overflow: auto; overscroll-behavior: contain;
++  background: #faf3df; color: #2b2114;
++  border: 2.5px solid #e2b73c; border-radius: 14px;
++  box-shadow: 0 16px 44px -12px rgba(0,0,0,.65), inset 0 0 0 1.5px rgba(255,255,255,.5);
++  animation: pf-pop .15s cubic-bezier(.22,.61,.36,1);
++  font-family: var(--font-body);
++}
++.pf-card[hidden] { display: none; }
++@keyframes pf-pop { from { opacity: 0; transform: translateY(6px) scale(.985); } to { opacity: 1; transform: none; } }
++
++.pf-close { position: absolute; top: 7px; right: 7px; z-index: 3;
++  width: 28px; height: 28px; border-radius: 50%; display: none; place-items: center;
++  background: rgba(43,33,20,.82); color: #f3ead0; border: 2px solid #faf3df;
++  font-size: .85rem; line-height: 1; cursor: pointer; }
++.pf-card.pinned .pf-close { display: grid; }            /* close affordance only when pinned */
++.pf-close:hover { background: #c1272d; }
++
++.pf-banner { display: flex; align-items: center; gap: 10px; padding: 11px 12px;
++  border-radius: 11px 11px 0 0;
++  background: linear-gradient(120deg, color-mix(in srgb, var(--c, #d8b54a) 32%, #faf3df), #faf3df 80%);
++  border-bottom: 1.5px solid #d9c486; }
++.pf-banner .flag-lg { width: 46px; height: 31px; object-fit: cover; border-radius: 4px;
++  border: 2px solid #faf3df; box-shadow: 0 2px 6px -2px rgba(0,0,0,.5); flex: none; }
++.pf-banner .flag-lg.noflag { display: grid; place-items: center; font-family: var(--font-badge);
++  font-size: .7rem; background: var(--c, #d8b54a); color: #fff; }
++.pf-id { min-width: 0; flex: 1; }
++.pf-id #profileName { font-family: var(--font-disp); font-size: 1.32rem; line-height: 1;
++  color: #2b2114; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.pf-sub { font-family: var(--font-lab); letter-spacing: .8px; font-size: .72rem; color: #715d42; margin-top: 3px; }
++.pf-tag { font-family: var(--font-badge); font-size: .54rem; letter-spacing: 1.5px;
++  color: #f3ead0; background: #2b2114; border-radius: 8px; padding: 3px 7px; align-self: flex-start; flex: none; }
++
++.pf-headline { display: flex; align-items: center; justify-content: space-between;
++  gap: 10px; padding: 9px 13px 4px; }
++.pf-headline .stars { font-size: 1rem; }
++.pf-win { font-family: var(--font-badge); font-size: 1.42rem; color: #c1442a;
++  display: flex; align-items: baseline; gap: 5px; }
++.pf-win small { font-family: var(--font-body); font-size: .56rem; color: #715d42; letter-spacing: .5px; }
++
++.pf-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 7px; padding: 4px 13px 9px; }
++.pf-stat { background: #ecdfbd; border: 1.5px solid #bda469; border-radius: 8px; padding: 7px 4px; text-align: center; }
++.pf-stat span { display: block; font-family: var(--font-lab); letter-spacing: .8px; font-size: .54rem;
++  color: #715d42; text-transform: uppercase; }
++.pf-stat b { font-family: var(--font-badge); font-size: .96rem; color: #2b2114; font-variant-numeric: tabular-nums; }
++
++.pf-row { display: flex; align-items: center; gap: 8px; margin: 0 13px 8px; padding: 8px 11px;
++  background: #ecdfbd; border: 1.5px solid #bda469; border-radius: 9px; font-size: .82rem; flex-wrap: wrap; }
++.pf-k { font-family: var(--font-badge); font-size: .56rem; letter-spacing: 1.5px; color: #715d42; white-space: nowrap; }
++.pf-odds .road { display: flex; align-items: flex-end; gap: 3px; height: 26px; flex: 1; }
++.pf-next-opp { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
++.pf-next-opp .flag-xs { width: 20px; height: 14px; object-fit: cover; border-radius: 2px; flex: none; }
++.pf-next-opp b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
++.pf-call { font-family: var(--font-lab); letter-spacing: .5px; padding: 1px 7px; border-radius: 5px;
++  border: 1.5px solid; font-size: .68rem; flex: none; }
++.call-win { color: #1c7a55; border-color: #1c7a55; }
++.call-loss { color: #c1272d; border-color: #c1272d; }
++.call-draw { color: #715d42; border-color: #715d42; }
++.pf-when { margin-left: auto; font-family: var(--font-lab); letter-spacing: .5px; font-size: .66rem; color: #715d42; }
++.pf-live { color: #c1272d; display: inline-flex; align-items: center; gap: 4px; }
++.pf-intel { display: block; }
++.pf-intel .pf-k { display: block; margin-bottom: 5px; }
++.pf-clips { display: flex; flex-direction: column; gap: 5px; }
++.pf-clip { font-size: .77rem; color: #2b2114; display: flex; gap: 6px; align-items: baseline; line-height: 1.3; }
++
++/* small screens / touch: a centred bottom sheet instead of an anchored popover */
++@media (max-width: 560px) {
++  .pf-card {
++    left: 0 !important; right: 0; top: auto !important; bottom: 0;
++    width: 100%; max-width: none; max-height: 86vh;
++    border-radius: 18px 18px 0 0; border-bottom: none;
++    animation: pf-sheet .22s cubic-bezier(.22,.61,.36,1);
++  }
++  .pf-card .pf-close { display: grid; }       /* always dismissable on touch */
++  .pf-banner { border-radius: 16px 16px 0 0; }
++}
++@keyframes pf-sheet { from { transform: translateY(100%); } to { transform: none; } }
++
++@media (prefers-reduced-motion: reduce) { .pf-card { animation: none; } }
++
++/* --- responsive: the mural funnel stacks instead of overflowing on phones --- */
++@media (max-width: 820px) {
++  .mural-body { grid-template-columns: 1fr; gap: 22px; }
++  .mural-groups { max-height: none; }
++  .river-svg { max-width: 340px; margin: 0 auto; }
++  .marginalia { margin-top: 6px; }
++}
++
++
++/* =====================================================================
++   iPHONE / SAFE-AREA POLISH — notch + home-indicator insets, taller
++   wrapped-topbar offsets, tighter ratios on small phones.
++   (Pairs with viewport-fit=cover in index.html.)
++   ===================================================================== */
++.topbar {
++  padding-top: max(9px, env(safe-area-inset-top));
++  padding-left: max(20px, env(safe-area-inset-left));
++  padding-right: max(20px, env(safe-area-inset-right));
++}
++.foot { padding-bottom: max(26px, env(safe-area-inset-bottom)); }
++
++@media (max-width: 720px) {
++  /* the album-index wraps to its own row, so the sticky topbar is ~2 rows tall —
++     anchored sections and the sticky Match-Centre tabs need a bigger offset */
++  .page, .cover { scroll-margin-top: 116px; }
++  .mc-tabs { top: 104px; }
++  .album-index a { padding: 9px 12px; }              /* >=40px tap target */
++  .page { padding-left: max(22px, env(safe-area-inset-left));
++          padding-right: max(22px, env(safe-area-inset-right)); }
++}
++@media (max-width: 400px) {
++  .page { padding: 56px 15px 26px; }
++  .cover-stamps { gap: 8px; }
++  .stamp { flex: 1 1 42%; }                           /* 2-up, no cramped wrap */
++  .pulse-cell { min-width: 100%; }                    /* one stat per row */
++}
++@media (max-width: 560px) {
++  .pf-card { padding-bottom: max(6px, env(safe-area-inset-bottom)); }
++}
++
++/* ---- 2D<->3D Overview toggle + 3D mount (progressive enhancement) ---- */
++.ov-switch { display: flex; gap: 6px; margin: 4px 0 16px; }
++.ov-btn { font-family: var(--font-lab); letter-spacing: 1px; font-size: .82rem; cursor: pointer;
++  background: var(--surface-2); color: var(--ink-soft); border: 2px solid var(--card-edge);
++  border-radius: 8px; padding: 6px 14px; }
++.ov-btn.on { background: var(--gold); color: #1c1407; border-color: var(--gold); }
++.overview3d-mount { position: relative; width: 100%; height: min(72vh, 560px);
++  border-radius: 12px; overflow: hidden; background: #0e0c0a; border: 2.5px solid var(--card-edge); }
++.overview3d-mount[hidden] { display: none; }
++@media (max-width: 560px) { .overview3d-mount { height: 66vh; } }
++
++/* ---- group standings: points pill ---- */
++.gpts { font-family: var(--font-badge); font-size: .82rem; color: var(--ink);
++  background: var(--surface-2); border: 1.5px solid var(--card-edge); border-radius: 7px;
++  padding: 2px 7px; min-width: 30px; text-align: center; flex: none; }
++.gpts small { font-family: var(--font-lab); font-size: .52rem; color: var(--ink-soft); margin-left: 2px; }
++@media (max-width: 420px) { .gnm small { display: none; } .gpts { font-size: .76rem; } }
++
++/* ---- Groups: Prediction/Reality toggle + form chips ---- */
++.grp-mode { display: flex; gap: 6px; margin: 4px 0 16px; }
++.grp-btn { font-family: var(--font-lab); letter-spacing: 1px; font-size: .82rem; cursor: pointer;
++  background: var(--surface-2); color: var(--ink-soft); border: 2px solid var(--card-edge);
++  border-radius: 8px; padding: 6px 14px; }
++.grp-btn.on { background: var(--gold); color: #1c1407; border-color: var(--gold); }
++.gform { display: inline-flex; gap: 3px; align-items: center; flex: none; }
++.fc { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
++.fc-W { background: var(--teal); } .fc-D { background: #8a8374; } .fc-L { background: var(--red); }
++.fc-none { color: var(--ink-soft); font-size: .8rem; }
++.gpos.qual { background: var(--teal); color: #fff; border-radius: 5px; }
