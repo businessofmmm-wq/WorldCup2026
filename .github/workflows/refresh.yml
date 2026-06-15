@@ -51,4 +51,6 @@ jobs:
       - name: Export static site to ./dist
         run: python run.py export dist
 
-      - name: Deploy ./dis
+      - name: Deploy ./dist to Cloudflare Pages
+        run: npx --yes wrangler@4 pages deploy --project-name=wcpa --branch=main --commit-dirty=true
+
