@@ -1,6 +1,6 @@
-#!/usr/bin/env python
+﻿#!/usr/bin/env python
 """
-World Cup 2026 prediction engine — command line.
+World Cup 2026 prediction engine â€” command line.
 
     python run.py health                 DB + data snapshot
     python run.py init                   create/upgrade the schema
@@ -40,13 +40,13 @@ import datetime as dt
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-except (AttributeError, ValueError):  # non-reconfigurable stream — fine
+except (AttributeError, ValueError):  # non-reconfigurable stream â€” fine
     pass
 
 import config
 import db
 from sources import results as src_results
-from sources import footballdata as src_live  # live scores via football-data.org v4 (was: sportsdb)
+from sources import sportsdb as src_live
 from sources import news as src_news
 from sources import statsbomb as src_xg
 from models import elo as elo_mod
@@ -57,7 +57,7 @@ from models.tournament import Tournament
 
 def cmd_health(_args):
     h = db.health()
-    print("World Cup 2026 engine — health")
+    print("World Cup 2026 engine â€” health")
     for k, v in h.items():
         print(f"  {k:<18} {v}")
 
@@ -88,7 +88,7 @@ def cmd_train(_args):
     print("[dixon-coles]"); dc = poisson_mod.fit()
     # Bivariate Poisson reuses the just-fit DC marginals and adds the shared
     # covariance lambda3, so the attack/defence MLE is not paid for twice. Always
-    # fit it (cheap) to keep it warm — selecting it live is then just a flag flip.
+    # fit it (cheap) to keep it warm â€” selecting it live is then just a flag flip.
     print("[bivariate-poisson]"); bivpois.fit(base=dc)
     print("training complete")
 
@@ -197,7 +197,7 @@ def cmd_refresh(_args):
 
 def cmd_loop(args):
     secs = int(args[0]) if args and args[0].isdigit() else 1800
-    print(f"inflow loop every {secs}s — Ctrl+C to stop")
+    print(f"inflow loop every {secs}s â€” Ctrl+C to stop")
     while True:
         try:
             cmd_refresh([])
