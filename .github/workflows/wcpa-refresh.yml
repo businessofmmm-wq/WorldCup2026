@@ -17,6 +17,7 @@ jobs:
       WORLDCUP_DATABASE_URL: ${{ secrets.WORLDCUP_DATABASE_URL }}
       CLOUDFLARE_API_TOKEN:  ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      WCPA_FOOTBALLDATA_TOKEN: ${{ secrets.WCPA_FOOTBALLDATA_TOKEN }}
     steps:
       - name: Gate — match-aware cadence
         id: gate
