@@ -127,15 +127,12 @@
 </div>
 
 <script>
-// ---- sample fixtures (fallback; live rail tries wcpa26.com/api/fixtures.json) ----
 const SAMPLE_FIXTURES = [
   {home:"Brazil", away:"Argentina", hs:2, as:1, status:"final", minute:90},
   {home:"France", away:"England", hs:1, as:1, status:"live", minute:67},
   {home:"Spain", away:"Germany", hs:null, as:null, status:"scheduled", minute:0},
 ];
 
-// ---- sample goals, in the StatsBomb event schema (x:0..120, y:0..80) ----
-// type: pass | carry | shot ; loc=[start], end=[finish]. Attacking toward x=120.
 const GOALS = [
   {
     id:"g1", team:"Brazil", scorer:"Rodrigo", minute:38, assist:"Raphinha",
@@ -177,37 +174,31 @@ const GOALS = [
   },
 ];
 
-// ---- pitch geometry (StatsBomb 120x80) ----
 const PW=120, PH=80;
 const cv=document.getElementById("pitch"), ctx=cv.getContext("2d");
-let W=cv.width, H=cv.height, M=26;       // margins
+let W=cv.width, H=cv.height, M=26;
 function sx(x){return M + x/PW*(W-2*M);}
 function sy(y){return M + y/PH*(H-2*M);}
 
 function drawPitch(){
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle="#0e2c33"; ctx.fillRect(0,0,W,H);
-  // stripes
   for(let i=0;i<10;i++){ctx.fillStyle=i%2?"#0f3038":"#0d2a31";
      ctx.fillRect(sx(i*12),sy(0),(W-2*M)/10,sy(80)-sy(0));}
   ctx.strokeStyle="rgba(190,220,225,.45)"; ctx.lineWidth=1.4;
   ctx.strokeRect(sx(0),sy(0),sx(120)-sx(0),sy(80)-sy(0));
-  // halfway + centre circle
   ctx.beginPath();ctx.moveTo(sx(60),sy(0));ctx.lineTo(sx(60),sy(80));ctx.stroke();
   ctx.beginPath();ctx.arc(sx(60),sy(40),sx(70)-sx(60),0,7);ctx.stroke();
-  // boxes (right goal attacked)
   ctx.strokeRect(sx(102),sy(18),sx(120)-sx(102),sy(62)-sy(18));
   ctx.strokeRect(sx(114),sy(30),sx(120)-sx(114),sy(50)-sy(30));
   ctx.strokeRect(sx(0),sy(18),sx(18)-sx(0),sy(62)-sy(18));
   ctx.strokeRect(sx(0),sy(30),sx(6)-sx(0),sy(50)-sy(30));
-  // goals
   ctx.strokeStyle="rgba(230,193,90,.9)";ctx.lineWidth=3;
   ctx.beginPath();ctx.moveTo(sx(120),sy(36));ctx.lineTo(sx(120),sy(44));ctx.stroke();
   ctx.lineWidth=1.4;ctx.strokeStyle="rgba(190,220,225,.45)";
   ctx.beginPath();ctx.moveTo(sx(0),sy(36));ctx.lineTo(sx(0),sy(44));ctx.stroke();
 }
 
-// ---- animation engine ----
 let goal=null, segs=[], total=0, t=0, playing=false, speed=1, raf=null, last=0;
 const DUR={pass:520, carry:760, shot:560};
 
@@ -224,19 +215,18 @@ function buildFeed(){
   goal.events.forEach((e,i)=>{
     const div=document.createElement("div"); div.className="ev "+e.type; div.dataset.i=i;
     const verb = e.type==="shot" ? "shoots — GOAL" : e.type==="carry" ? "drives" : "plays it";
-    div.innerHTML=`<span class="t">${e.min}'</span><span class="k">${e.type}</span>
-      <span>${e.player} ${verb}</span>`;
-    f.appendChild(div);
+    const tt=document.createElement("span"); tt.className="t"; tt.textContent=e.min+"'";
+    const k=document.createElement("span"); k.className="k"; k.textContent=e.type;
+    const s=document.createElement("span"); s.textContent=e.player+" "+verb;
+    div.append(tt,k,s); f.appendChild(div);
   });
 }
-function curIndex(){let idx=0;for(let i=0;i<segs.length;i++){if(t>=segs[i].start)idx=i;}return idx;}
 function highlightFeed(i){document.querySelectorAll(".ev").forEach(el=>
    el.classList.toggle("on", +el.dataset.i<=i));}
 
 function easeInOut(p){return p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;}
 
 function ballAt(time){
-  // returns {x,y, idx, p}
   let s=segs[0];
   for(const seg of segs){ if(time>=seg.start) s=seg; }
   const p=Math.min(1,(time-s.start)/s.dur);
@@ -248,7 +238,6 @@ function ballAt(time){
 function render(){
   drawPitch();
   const cur=ballAt(t), idx=cur.idx;
-  // completed path trail
   ctx.lineWidth=2.4; ctx.lineJoin="round";
   for(let i=0;i<=idx;i++){
     const e=segs[i].e; const done=(i<idx)?1:cur.p;
@@ -260,11 +249,9 @@ function render(){
     ctx.stroke();
   }
   ctx.setLineDash([]);
-  // touch nodes
   for(let i=0;i<=idx;i++){const e=segs[i].e;
     ctx.fillStyle="rgba(238,241,247,.85)";
     ctx.beginPath();ctx.arc(sx(e.loc[0]),sy(e.loc[1]),3.2,0,7);ctx.fill();}
-  // freeze frame defenders/gk at/after shot
   const shot=segs[idx].e;
   if(shot.type==="shot" && shot.freeze){
     shot.freeze.forEach(d=>{
@@ -273,12 +260,10 @@ function render(){
       if(d.gk){ctx.strokeStyle="#241c00";ctx.lineWidth=1.5;ctx.stroke();}
     });
   }
-  // ball
   const bx=sx(cur.x), by=sy(cur.y);
   ctx.shadowColor="rgba(230,193,90,.9)"; ctx.shadowBlur=12;
   ctx.fillStyle="#fff"; ctx.beginPath();ctx.arc(bx,by,5.4,0,7);ctx.fill();
   ctx.shadowBlur=0;
-  // net ripple at end
   if(idx===segs.length-1 && cur.p>=1){
     ctx.strokeStyle="rgba(255,90,95,.9)";ctx.lineWidth=2;
     for(let r=6;r<26;r+=7){ctx.globalAlpha=1-r/30;ctx.beginPath();
@@ -301,7 +286,6 @@ function setPlaying(v){
   if(v){ if(t>=total)t=0; raf=requestAnimationFrame(tick);} else if(raf)cancelAnimationFrame(raf);
 }
 
-// ---- UI wiring ----
 document.getElementById("play").onclick=()=>setPlaying(!playing);
 document.getElementById("restart").onclick=()=>{t=0;render();if(!playing)setPlaying(true);};
 document.getElementById("scrub").oninput=e=>{t=e.target.value/1000*total;render();};
@@ -313,29 +297,34 @@ function buildGoalSel(){
   const wrap=document.getElementById("goalsel"); wrap.innerHTML="";
   GOALS.forEach(g=>{const b=document.createElement("button");
     b.className="gbtn"; b.dataset.id=g.id;
-    b.innerHTML=`<span class="lab">${g.label}</span><span class="sub">${g.sub}</span>`;
+    const lab=document.createElement("span"); lab.className="lab"; lab.textContent=g.label;
+    const sub=document.createElement("span"); sub.className="sub"; sub.textContent=g.sub;
+    b.append(lab,sub);
     b.onclick=()=>loadGoal(g); wrap.appendChild(b);});
 }
 function markGoalSel(){document.querySelectorAll(".gbtn").forEach(b=>
    b.classList.toggle("on", b.dataset.id===goal.id));}
 
+const esc=s=>String(s).replace(/[&<>"']/g,c=>(
+  {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 function buildRail(fixtures){
   const rail=document.getElementById("rail"); rail.innerHTML="";
   fixtures.forEach(m=>{
     const d=document.createElement("div"); d.className="match";
-    const sc = m.hs!=null ? `${m.hs}–${m.as}` : "vs";
-    const st = m.status==="live"?`<span class="dot"></span>LIVE ${m.minute}'`
+    const cls = m.status==="final"?"final":m.status==="live"?"live":"sched";
+    const min = Number(m.minute)||0;
+    const st = m.status==="live"?`<span class="dot"></span>LIVE ${min}'`
             : m.status==="final"?"FULL TIME":"SCHEDULED";
-    d.innerHTML=`<div class="st ${m.status==="final"?"final":m.status==="live"?"live":"sched"}">${st}</div>
-      <div class="tm"><span>${m.home}</span><span class="sc">${m.hs!=null?m.hs:""}</span></div>
-      <div class="tm"><span>${m.away}</span><span class="sc">${m.as!=null?m.as:""}</span></div>`;
+    const hs = m.hs!=null?esc(m.hs):"", as=m.as!=null?esc(m.as):"";
+    d.innerHTML=`<div class="st ${cls}">${st}</div>
+      <div class="tm"><span>${esc(m.home)}</span><span class="sc">${hs}</span></div>
+      <div class="tm"><span>${esc(m.away)}</span><span class="sc">${as}</span></div>`;
     d.onclick=()=>{document.querySelectorAll(".match").forEach(x=>x.classList.remove("sel"));
       d.classList.add("sel");};
     rail.appendChild(d);
   });
 }
 
-// try live fixtures; fall back to samples
 function initRail(){
   buildRail(SAMPLE_FIXTURES);
   fetch("https://wcpa26.com/api/fixtures.json",{mode:"cors"})
@@ -343,7 +332,8 @@ function initRail(){
     .then(data=>{
       const list=(data.fixtures||data||[]).slice(0,12).map(f=>({
         home:f.home||f.home_team, away:f.away||f.away_team,
-        hs:f.home_score??f.hs??null, as:f.away_score??f.as??null,
+        hs:f.home_score!=null?f.home_score:(f.hs!=null?f.hs:null),
+        as:f.away_score!=null?f.away_score:(f.as!=null?f.as:null),
         status:f.status||"scheduled", minute:f.minute||0}));
       if(list.length){buildRail(list); document.getElementById("src").textContent="live · wcpa26.com";}
     }).catch(()=>{});
