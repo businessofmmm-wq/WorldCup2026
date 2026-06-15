@@ -1,6 +1,6 @@
-﻿#!/usr/bin/env python
+#!/usr/bin/env python
 """
-World Cup 2026 prediction engine â€” command line.
+World Cup 2026 prediction engine — command line.
 
     python run.py health                 DB + data snapshot
     python run.py init                   create/upgrade the schema
@@ -30,6 +30,7 @@ World Cup 2026 prediction engine â€” command line.
 ratings, and re-run the simulation so predictions always reflect latest data.
 """
 from __future__ import annotations
+import argparse
 import sys
 import time
 import datetime as dt
@@ -40,13 +41,13 @@ import datetime as dt
 try:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
-except (AttributeError, ValueError):  # non-reconfigurable stream â€” fine
+except (AttributeError, ValueError):  # non-reconfigurable stream — fine
     pass
 
 import config
 import db
 from sources import results as src_results
-from sources import sportsdb as src_live
+from sources import footballdata as src_live
 from sources import news as src_news
 from sources import statsbomb as src_xg
 from models import elo as elo_mod
@@ -57,7 +58,7 @@ from models.tournament import Tournament
 
 def cmd_health(_args):
     h = db.health()
-    print("World Cup 2026 engine â€” health")
+    print("World Cup 2026 engine — health")
     for k, v in h.items():
         print(f"  {k:<18} {v}")
 
@@ -68,7 +69,7 @@ def cmd_init(_args):
 
 
 def cmd_ingest(args):
-    what = (args[0] if args else "all").lower()
+    what = args.what.lower()
     db.init_schema()
     if what in ("results", "all"):
         print("[results]"); src_results.ingest()
@@ -88,7 +89,7 @@ def cmd_train(_args):
     print("[dixon-coles]"); dc = poisson_mod.fit()
     # Bivariate Poisson reuses the just-fit DC marginals and adds the shared
     # covariance lambda3, so the attack/defence MLE is not paid for twice. Always
-    # fit it (cheap) to keep it warm â€” selecting it live is then just a flag flip.
+    # fit it (cheap) to keep it warm — selecting it live is then just a flag flip.
     print("[bivariate-poisson]"); bivpois.fit(base=dc)
     print("training complete")
 
@@ -99,29 +100,17 @@ def cmd_calibrate(_args):
 
 
 def cmd_predict(args):
-    if len(args) < 2:
-        print("usage: predict HOME AWAY [--home]"); return
-    home, away = args[0], args[1]
-    neutral = "--home" not in args
     p = Predictor()
-    print(fmt(p.predict(home, away, neutral=neutral, log=True,
+    print(fmt(p.predict(args.home, args.away, neutral=not args.home_field, log=True,
                         match_date=dt.date.today())))
 
 
 def cmd_backtest(args):
     from models import backtest as bt
-    year = 2018
-    if args and args[0].isdigit():
-        year = int(args[0])
-    refit = 45
-    if "--refit" in args:
-        k = args.index("--refit")
-        if k + 1 < len(args) and args[k + 1].isdigit():
-            refit = int(args[k + 1])
-    if "--compare" in args:   # bivariate-Poisson vs Dixon-Coles head-to-head
-        bt.compare(test_start=dt.date(year, 1, 1), refit_days=refit)
+    if args.compare:   # bivariate-Poisson vs Dixon-Coles head-to-head
+        bt.compare(test_start=dt.date(args.year, 1, 1), refit_days=args.refit)
     else:
-        bt.report(test_start=dt.date(year, 1, 1), refit_days=refit)
+        bt.report(test_start=dt.date(args.year, 1, 1), refit_days=args.refit)
 
 
 def cmd_tune(_args):
@@ -130,8 +119,7 @@ def cmd_tune(_args):
 
 
 def cmd_simulate(args):
-    runs = int(args[0]) if args and args[0].isdigit() else config.SIM_RUNS
-    Tournament().run(runs=runs)
+    Tournament().run(runs=args.runs)
 
 
 def cmd_groups(_args):
@@ -145,7 +133,7 @@ def cmd_groups(_args):
 
 
 def cmd_news(args):
-    team = args[0] if args else None
+    team = args.team
     for row in src_news.recent(20, team=team):
         if team:
             pub, src, title, flags = row
@@ -158,7 +146,7 @@ def cmd_news(args):
 
 
 def cmd_rankings(args):
-    n = int(args[0]) if args and args[0].isdigit() else 25
+    n = args.n
     print(f"Elo top {n} (active, last 4y):")
     for i, (t, e, c) in enumerate(elo_mod.top(n), 1):
         print(f"  {i:>2}. {t:<22}{e:7.1f}  ({c})")
@@ -196,84 +184,43 @@ def cmd_refresh(_args):
 
 
 def cmd_loop(args):
-    secs = int(args[0]) if args and args[0].isdigit() else 1800
-    print(f"inflow loop every {secs}s â€” Ctrl+C to stop")
+    print(f"inflow loop every {args.secs}s — Ctrl+C to stop")
     while True:
         try:
-            cmd_refresh([])
+            cmd_refresh(args)
         except Exception as exc:
             print(f"  refresh error (continuing): {exc}")
-        time.sleep(secs)
+        time.sleep(args.secs)
 
 
 def cmd_viz(args):
     from viz.server import serve
-    port = int(args[0]) if args and args[0].isdigit() else 8008
-    serve(port=port)
+    serve(port=args.port)
 
 
 def cmd_export(args):
     from viz import export as exporter
-    out = next((a for a in args if not a.startswith("-")), "dist")
-    exporter.build(out, matrix="--no-matrix" not in args)
+    exporter.build(args.dir, matrix=not args.no_matrix)
 
 
 def cmd_loadtest(args):
     from viz import loadtest
-    loadtest.main(args)
+    loadtest.main([args.target])
 
 
 def cmd_ogcard(args):
     from viz import ogcard
-    ogcard.main(args)
+    ogcard.main([])
 
 
 def cmd_graph(args):
     from tools import depgraph
-    depgraph.main(args)
+    depgraph.main([])
 
 
 def cmd_audit(args):
     from tools import audit
     raise SystemExit(audit.main(args))
-
-
-def cmd_simvar(args):
-    from models import variance
-    variance.main(args)
-
-
-def cmd_cv(args):
-    # Lazy import: tools.cv_tactics pulls in OpenCV/Ultralytics only when actually run,
-    # so the heavy CV stack never loads for any other command (or any serving path).
-    from tools import cv_tactics
-    raise SystemExit(cv_tactics.main(args))
-
-
-COMMANDS = {
-    "health": cmd_health, "init": cmd_init, "ingest": cmd_ingest,
-    "train": cmd_train, "predict": cmd_predict, "backtest": cmd_backtest,
-    "tune": cmd_tune, "calibrate": cmd_calibrate, "simulate": cmd_simulate,
-    "groups": cmd_groups, "news": cmd_news, "rankings": cmd_rankings,
-    "refresh": cmd_refresh, "loop": cmd_loop, "viz": cmd_viz,
-    "export": cmd_export, "loadtest": cmd_loadtest, "ogcard": cmd_ogcard,
-    "graph": cmd_graph, "audit": cmd_audit, "simvar": cmd_simvar,
-    "cv": cmd_cv,
-}
-
-
-def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        print(__doc__)
-        return
-    COMMANDS[sys.argv[1]](sys.argv[2:])
-
-
-if __name__ == "__main__":
-    main()
-def cmd_audit(args):
-    from tools import audit
-    raise SystemExit(audit.main([]))
 
 
 def cmd_simvar(args):
@@ -287,6 +234,8 @@ def cmd_simvar(args):
 
 
 def cmd_cv(args):
+    # Lazy import: tools.cv_tactics pulls in OpenCV/Ultralytics only when actually run,
+    # so the heavy CV stack never loads for any other command (or any serving path).
     from tools import cv_tactics
     raise SystemExit(cv_tactics.main([
         args.clip,
@@ -301,7 +250,7 @@ def cmd_cv(args):
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="World Cup 2026 prediction engine â€” command line.",
+        description="World Cup 2026 prediction engine — command line.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -312,7 +261,8 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("init", help="create/upgrade the schema").set_defaults(func=cmd_init)
 
     ingest = subparsers.add_parser("ingest", help="results | live | news | xg | all")
-    ingest.add_argument("what", nargs="?", default="all", choices=["results", "live", "news", "xg", "all"])
+    ingest.add_argument("what", nargs="?", default="all",
+                        choices=["results", "live", "news", "xg", "all"])
     ingest.set_defaults(func=cmd_ingest)
 
     subparsers.add_parser("train", help="recompute Elo + Dixon-Coles ratings").set_defaults(func=cmd_train)
@@ -320,13 +270,16 @@ def build_parser() -> argparse.ArgumentParser:
     predict = subparsers.add_parser("predict", help="single-fixture prediction")
     predict.add_argument("home")
     predict.add_argument("away")
-    predict.add_argument("--home", dest="home_field", action="store_true", help="treat the first team as the home side")
+    predict.add_argument("--home", dest="home_field", action="store_true",
+                         help="treat the first team as the home side")
     predict.set_defaults(func=cmd_predict)
 
     backtest = subparsers.add_parser("backtest", help="leakage-free accuracy backtest")
     backtest.add_argument("year", nargs="?", type=int, default=2018)
-    backtest.add_argument("--compare", action="store_true", help="compare bivariate-Poisson vs Dixon-Coles")
-    backtest.add_argument("--refit", type=int, default=45, help="refit interval in days")
+    backtest.add_argument("--compare", action="store_true",
+                          help="compare bivariate-Poisson vs Dixon-Coles")
+    backtest.add_argument("--refit", type=int, default=45,
+                          help="refit interval in days")
     backtest.set_defaults(func=cmd_backtest)
 
     subparsers.add_parser("tune", help="grid-tune params on held-out RPS").set_defaults(func=cmd_tune)
@@ -370,8 +323,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("audit", help="security + stability + load + hygiene gate").set_defaults(func=cmd_audit)
 
     simvar = subparsers.add_parser("simvar", help="variance-reduction benchmark")
-    simvar.add_argument("-n", "--num", type=int, default=None, help="sample size for variance benchmark")
-    simvar.add_argument("-r", "--runs", type=int, default=None, help="simulation run count for benchmark")
+    simvar.add_argument("-n", "--num", type=int, default=None,
+                        help="sample size for variance benchmark")
+    simvar.add_argument("-r", "--runs", type=int, default=None,
+                        help="simulation run count for benchmark")
     simvar.set_defaults(func=cmd_simvar)
 
     cv = subparsers.add_parser("cv", help="Quantum Tactics CV pass")
