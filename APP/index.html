@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WCPA Goal Theatre — see how the goal happened</title>
+<style>
+  :root{
+    --ink:#0a0c12; --char:#13161f; --char2:#1b1f2b; --line:#2a3040;
+    --gold:#e6c15a; --gold2:#f3d685; --foil:#7fe3d0; --foil2:#9b8cff;
+    --text:#eef1f7; --muted:#9aa3b5; --net:#cfd6e6;
+    --live:#ff5a5f; --final:#7fe3d0;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:
+     radial-gradient(1200px 600px at 70% -10%, #1a1f2e 0%, var(--ink) 55%) fixed;
+     color:var(--text);font-family:"Segoe UI",system-ui,-apple-system,sans-serif}
+  a{color:var(--gold2)}
+  .wrap{max-width:1180px;margin:0 auto;padding:18px 20px 40px}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .brand{font-size:24px;font-weight:700;letter-spacing:.5px;
+     background:linear-gradient(92deg,var(--gold2),var(--gold) 40%,var(--foil));
+     -webkit-background-clip:text;background-clip:text;color:transparent}
+  .tag{color:var(--muted);font-size:13px}
+  .rail{display:flex;gap:10px;overflow-x:auto;padding:10px 0 14px;margin-bottom:8px;
+     border-bottom:1px solid var(--line)}
+  .match{flex:0 0 auto;min-width:172px;background:var(--char);border:1px solid var(--line);
+     border-radius:12px;padding:10px 12px;cursor:pointer;transition:.15s;position:relative}
+  .match:hover{border-color:var(--gold);transform:translateY(-2px)}
+  .match.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold) inset}
+  .match .st{font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase}
+  .st.live{color:var(--live)} .st.final{color:var(--final)} .st.sched{color:var(--muted)}
+  .match .tm{display:flex;justify-content:space-between;font-size:14px;margin-top:5px}
+  .match .sc{font-variant-numeric:tabular-nums;font-weight:700;color:var(--gold2)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--live);display:inline-block;
+     margin-right:5px;animation:pulse 1.1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+  .stage{display:grid;grid-template-columns:1fr 320px;gap:18px}
+  @media(max-width:880px){.stage{grid-template-columns:1fr}}
+  .pitchcard{background:linear-gradient(180deg,#10202a,#0c1a22);border:1px solid var(--line);
+     border-radius:16px;padding:12px;position:relative;overflow:hidden}
+  .gmeta{display:flex;justify-content:space-between;align-items:center;margin:2px 4px 8px}
+  .gmeta .who{font-weight:700;font-size:16px}
+  .gmeta .min{color:var(--gold2);font-weight:700;font-variant-numeric:tabular-nums}
+  canvas{width:100%;height:auto;display:block;border-radius:10px;background:#0e2630}
+  .controls{display:flex;align-items:center;gap:12px;margin-top:12px;flex-wrap:wrap}
+  button{background:var(--char2);color:var(--text);border:1px solid var(--line);
+     border-radius:10px;padding:8px 12px;font-size:13px;cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--gold);color:var(--gold2)}
+  button.primary{background:linear-gradient(92deg,var(--gold),var(--gold2));color:#241c00;
+     border:none;font-weight:700}
+  .scrub{flex:1;min-width:140px;accent-color:var(--gold)}
+  .speed{display:flex;gap:4px}
+  .speed button.on{border-color:var(--gold);color:var(--gold2)}
+  .side{display:flex;flex-direction:column;gap:14px}
+  .panel{background:var(--char);border:1px solid var(--line);border-radius:14px;padding:14px}
+  .panel h3{margin:0 0 10px;font-size:13px;letter-spacing:.8px;text-transform:uppercase;
+     color:var(--muted)}
+  .goalsel{display:flex;flex-direction:column;gap:8px}
+  .gbtn{text-align:left;display:flex;justify-content:space-between;align-items:center}
+  .gbtn .lab{font-size:13px} .gbtn .sub{font-size:11px;color:var(--muted)}
+  .gbtn.on{border-color:var(--gold);background:var(--char2)}
+  .feed{display:flex;flex-direction:column;gap:7px;max-height:300px;overflow:auto}
+  .ev{display:flex;gap:9px;font-size:13px;opacity:.45;transition:.2s;align-items:baseline}
+  .ev.on{opacity:1}
+  .ev .t{flex:0 0 30px;color:var(--gold2);font-variant-numeric:tabular-nums;font-weight:700}
+  .ev .k{flex:0 0 52px;font-size:10px;letter-spacing:.5px;text-transform:uppercase;color:var(--muted)}
+  .ev.shot .k{color:var(--live)}
+  footer{margin-top:22px;color:var(--muted);font-size:12px;line-height:1.6;
+     border-top:1px solid var(--line);padding-top:14px}
+  .pill{display:inline-block;background:var(--char2);border:1px solid var(--line);
+     border-radius:999px;padding:2px 9px;font-size:11px;color:var(--muted);margin-left:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">WCPA · Goal Theatre</div>
+    <div class="tag">see how the goal happened — without watching the game<span class="pill" id="src">sample data</span></div>
+  </header>
+
+  <div class="rail" id="rail"></div>
+
+  <div class="stage">
+    <div class="pitchcard">
+      <div class="gmeta">
+        <div class="who" id="gwho">—</div>
+        <div class="min" id="gmin"></div>
+      </div>
+      <canvas id="pitch" width="720" height="480"></canvas>
+      <div class="controls">
+        <button class="primary" id="play">▶ Play</button>
+        <button id="restart">↻</button>
+        <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0">
+        <div class="speed">
+          <button data-s="0.5">0.5×</button>
+          <button data-s="1" class="on">1×</button>
+          <button data-s="2">2×</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <h3>Goals in this match</h3>
+        <div class="goalsel" id="goalsel"></div>
+      </div>
+      <div class="panel">
+        <h3>How it unfolded</h3>
+        <div class="feed" id="feed"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <strong>How this works.</strong> Each goal is reconstructed from event data on a
+    120×80 pitch (the StatsBomb open-data schema): every pass, carry and the finishing
+    shot, animated in sequence so you can read the build-up. Drop a real StatsBomb match
+    events file into <code>GOALS</code> and it plays as-is.<br>
+    <strong>Live note.</strong> Free live feeds for WC2026 (football-data.org) give only
+    score, scorer and minute — not player positions — so a true positional replay of a
+    <em>live</em> 2026 goal needs StatsBomb (historical) or a paid positional feed. Until
+    then, live goals show as a scorer/minute timeline; finished matches with event data
+    get the full reconstruction. The match rail pulls <code>wcpa26.com/api/fixtures.json</code>
+    when served online, and falls back to bundled samples offline.
+  </footer>
+</div>
+
+<script>
+// ---- sample fixtures (fallback; live rail tries wcpa26.com/api/fixtures.json) ----
+const SAMPLE_FIXTURES = [
+  {home:"Brazil", away:"Argentina", hs:2, as:1, status:"final", minute:90},
+  {home:"France", away:"England", hs:1, as:1, status:"live", minute:67},
+  {home:"Spain", away:"Germany", hs:null, as:null, status:"scheduled", minute:0},
+];
+
+// ---- sample goals, in the StatsBomb event schema (x:0..120, y:0..80) ----
+// type: pass | carry | shot ; loc=[start], end=[finish]. Attacking toward x=120.
+const GOALS = [
+  {
+    id:"g1", team:"Brazil", scorer:"Rodrigo", minute:38, assist:"Raphinha",
+    label:"Brazil — Rodrigo 38'", sub:"9-pass move, cutback finish",
+    events:[
+      {min:38,sec:2,type:"pass",player:"Casemiro",loc:[34,40],end:[28,18]},
+      {min:38,sec:4,type:"pass",player:"L. Paquetá",loc:[28,18],end:[46,14]},
+      {min:38,sec:6,type:"carry",player:"Raphinha",loc:[46,14],end:[60,16]},
+      {min:38,sec:9,type:"pass",player:"Raphinha",loc:[60,16],end:[72,34]},
+      {min:38,sec:11,type:"pass",player:"Neymar",loc:[72,34],end:[83,24]},
+      {min:38,sec:13,type:"carry",player:"Vinícius",loc:[83,24],end:[95,22]},
+      {min:38,sec:16,type:"pass",player:"Vinícius",loc:[95,22],end:[104,42]},
+      {min:38,sec:18,type:"shot",player:"Rodrigo",loc:[104,42],end:[120,38],
+        freeze:[{x:117,y:40,gk:true},{x:108,y:36},{x:101,y:46},{x:99,y:30}]},
+    ]
+  },
+  {
+    id:"g2", team:"Brazil", scorer:"Vinícius", minute:71, assist:"Neymar",
+    label:"Brazil — Vinícius 71'", sub:"counter-attack, long ball",
+    events:[
+      {min:71,sec:1,type:"pass",player:"Marquinhos",loc:[22,40],end:[40,52]},
+      {min:71,sec:4,type:"carry",player:"Neymar",loc:[40,52],end:[58,50]},
+      {min:71,sec:7,type:"pass",player:"Neymar",loc:[58,50],end:[92,60]},
+      {min:71,sec:10,type:"carry",player:"Vinícius",loc:[92,60],end:[106,52]},
+      {min:71,sec:13,type:"shot",player:"Vinícius",loc:[106,52],end:[120,41],
+        freeze:[{x:117,y:40,gk:true},{x:110,y:48},{x:104,y:44}]},
+    ]
+  },
+  {
+    id:"g3", team:"Argentina", scorer:"L. Messi", minute:83, assist:null,
+    label:"Argentina — Messi 83'", sub:"solo dribble from the right",
+    events:[
+      {min:83,sec:1,type:"carry",player:"L. Messi",loc:[66,12],end:[78,18]},
+      {min:83,sec:4,type:"carry",player:"L. Messi",loc:[78,18],end:[90,26]},
+      {min:83,sec:7,type:"carry",player:"L. Messi",loc:[90,26],end:[101,34]},
+      {min:83,sec:10,type:"shot",player:"L. Messi",loc:[101,34],end:[120,42],
+        freeze:[{x:117,y:40,gk:true},{x:106,y:32},{x:99,y:38},{x:110,y:44}]},
+    ]
+  },
+];
+
+// ---- pitch geometry (StatsBomb 120x80) ----
+const PW=120, PH=80;
+const cv=document.getElementById("pitch"), ctx=cv.getContext("2d");
+let W=cv.width, H=cv.height, M=26;       // margins
+function sx(x){return M + x/PW*(W-2*M);}
+function sy(y){return M + y/PH*(H-2*M);}
+
+function drawPitch(){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle="#0e2c33"; ctx.fillRect(0,0,W,H);
+  // stripes
+  for(let i=0;i<10;i++){ctx.fillStyle=i%2?"#0f3038":"#0d2a31";
+     ctx.fillRect(sx(i*12),sy(0),(W-2*M)/10,sy(80)-sy(0));}
+  ctx.strokeStyle="rgba(190,220,225,.45)"; ctx.lineWidth=1.4;
+  ctx.strokeRect(sx(0),sy(0),sx(120)-sx(0),sy(80)-sy(0));
+  // halfway + centre circle
+  ctx.beginPath();ctx.moveTo(sx(60),sy(0));ctx.lineTo(sx(60),sy(80));ctx.stroke();
+  ctx.beginPath();ctx.arc(sx(60),sy(40),sx(70)-sx(60),0,7);ctx.stroke();
+  // boxes (right goal attacked)
+  ctx.strokeRect(sx(102),sy(18),sx(120)-sx(102),sy(62)-sy(18));
+  ctx.strokeRect(sx(114),sy(30),sx(120)-sx(114),sy(50)-sy(30));
+  ctx.strokeRect(sx(0),sy(18),sx(18)-sx(0),sy(62)-sy(18));
+  ctx.strokeRect(sx(0),sy(30),sx(6)-sx(0),sy(50)-sy(30));
+  // goals
+  ctx.strokeStyle="rgba(230,193,90,.9)";ctx.lineWidth=3;
+  ctx.beginPath();ctx.moveTo(sx(120),sy(36));ctx.lineTo(sx(120),sy(44));ctx.stroke();
+  ctx.lineWidth=1.4;ctx.strokeStyle="rgba(190,220,225,.45)";
+  ctx.beginPath();ctx.moveTo(sx(0),sy(36));ctx.lineTo(sx(0),sy(44));ctx.stroke();
+}
+
+// ---- animation engine ----
+let goal=null, segs=[], total=0, t=0, playing=false, speed=1, raf=null, last=0;
+const DUR={pass:520, carry:760, shot:560};
+
+function loadGoal(g){
+  goal=g; segs=[]; total=0;
+  g.events.forEach(e=>{const d=DUR[e.type]||600; segs.push({e,start:total,dur:d}); total+=d;});
+  t=0; setPlaying(false);
+  document.getElementById("gwho").textContent=g.scorer+(g.assist?"  ·  assist "+g.assist:"");
+  document.getElementById("gmin").textContent=g.minute+"'";
+  buildFeed(); markGoalSel(); render();
+}
+function buildFeed(){
+  const f=document.getElementById("feed"); f.innerHTML="";
+  goal.events.forEach((e,i)=>{
+    const div=document.createElement("div"); div.className="ev "+e.type; div.dataset.i=i;
+    const verb = e.type==="shot" ? "shoots — GOAL" : e.type==="carry" ? "drives" : "plays it";
+    div.innerHTML=`<span class="t">${e.min}'</span><span class="k">${e.type}</span>
+      <span>${e.player} ${verb}</span>`;
+    f.appendChild(div);
+  });
+}
+function curIndex(){let idx=0;for(let i=0;i<segs.length;i++){if(t>=segs[i].start)idx=i;}return idx;}
+function highlightFeed(i){document.querySelectorAll(".ev").forEach(el=>
+   el.classList.toggle("on", +el.dataset.i<=i));}
+
+function easeInOut(p){return p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;}
+
+function ballAt(time){
+  // returns {x,y, idx, p}
+  let s=segs[0];
+  for(const seg of segs){ if(time>=seg.start) s=seg; }
+  const p=Math.min(1,(time-s.start)/s.dur);
+  const e=s.e, ep=easeInOut(p);
+  return {x:e.loc[0]+(e.end[0]-e.loc[0])*ep, y:e.loc[1]+(e.end[1]-e.loc[1])*ep,
+          idx:segs.indexOf(s), p, e};
+}
+
+function render(){
+  drawPitch();
+  const cur=ballAt(t), idx=cur.idx;
+  // completed path trail
+  ctx.lineWidth=2.4; ctx.lineJoin="round";
+  for(let i=0;i<=idx;i++){
+    const e=segs[i].e; const done=(i<idx)?1:cur.p;
+    ctx.strokeStyle = e.type==="shot" ? "rgba(255,90,95,.9)" :
+      e.type==="carry" ? "rgba(127,227,208,.55)" : "rgba(230,193,90,.65)";
+    ctx.setLineDash(e.type==="carry"?[5,5]:[]);
+    ctx.beginPath(); ctx.moveTo(sx(e.loc[0]),sy(e.loc[1]));
+    ctx.lineTo(sx(e.loc[0]+(e.end[0]-e.loc[0])*done), sy(e.loc[1]+(e.end[1]-e.loc[1])*done));
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  // touch nodes
+  for(let i=0;i<=idx;i++){const e=segs[i].e;
+    ctx.fillStyle="rgba(238,241,247,.85)";
+    ctx.beginPath();ctx.arc(sx(e.loc[0]),sy(e.loc[1]),3.2,0,7);ctx.fill();}
+  // freeze frame defenders/gk at/after shot
+  const shot=segs[idx].e;
+  if(shot.type==="shot" && shot.freeze){
+    shot.freeze.forEach(d=>{
+      ctx.fillStyle=d.gk?"#f3d685":"rgba(155,140,255,.85)";
+      ctx.beginPath();ctx.arc(sx(d.x),sy(d.y),d.gk?5:4.4,0,7);ctx.fill();
+      if(d.gk){ctx.strokeStyle="#241c00";ctx.lineWidth=1.5;ctx.stroke();}
+    });
+  }
+  // ball
+  const bx=sx(cur.x), by=sy(cur.y);
+  ctx.shadowColor="rgba(230,193,90,.9)"; ctx.shadowBlur=12;
+  ctx.fillStyle="#fff"; ctx.beginPath();ctx.arc(bx,by,5.4,0,7);ctx.fill();
+  ctx.shadowBlur=0;
+  // net ripple at end
+  if(idx===segs.length-1 && cur.p>=1){
+    ctx.strokeStyle="rgba(255,90,95,.9)";ctx.lineWidth=2;
+    for(let r=6;r<26;r+=7){ctx.globalAlpha=1-r/30;ctx.beginPath();
+      ctx.arc(sx(120),sy(39),r,0,7);ctx.stroke();}
+    ctx.globalAlpha=1;
+    ctx.fillStyle="#f3d685";ctx.font="bold 22px Segoe UI";ctx.textAlign="center";
+    ctx.fillText("GOAL",W/2,sy(8));
+  }
+  document.getElementById("scrub").value=Math.round(t/total*1000);
+  highlightFeed(idx);
+}
+
+function tick(now){
+  if(!last)last=now; const dt=(now-last)*speed; last=now;
+  t+=dt; if(t>=total){t=total; setPlaying(false);}
+  render(); if(playing)raf=requestAnimationFrame(tick);
+}
+function setPlaying(v){
+  playing=v; last=0; document.getElementById("play").textContent=v?"❚❚ Pause":"▶ Play";
+  if(v){ if(t>=total)t=0; raf=requestAnimationFrame(tick);} else if(raf)cancelAnimationFrame(raf);
+}
+
+// ---- UI wiring ----
+document.getElementById("play").onclick=()=>setPlaying(!playing);
+document.getElementById("restart").onclick=()=>{t=0;render();if(!playing)setPlaying(true);};
+document.getElementById("scrub").oninput=e=>{t=e.target.value/1000*total;render();};
+document.querySelectorAll(".speed button").forEach(b=>b.onclick=()=>{
+  speed=+b.dataset.s; document.querySelectorAll(".speed button").forEach(x=>x.classList.remove("on"));
+  b.classList.add("on");});
+
+function buildGoalSel(){
+  const wrap=document.getElementById("goalsel"); wrap.innerHTML="";
+  GOALS.forEach(g=>{const b=document.createElement("button");
+    b.className="gbtn"; b.dataset.id=g.id;
+    b.innerHTML=`<span class="lab">${g.label}</span><span class="sub">${g.sub}</span>`;
+    b.onclick=()=>loadGoal(g); wrap.appendChild(b);});
+}
+function markGoalSel(){document.querySelectorAll(".gbtn").forEach(b=>
+   b.classList.toggle("on", b.dataset.id===goal.id));}
+
+function buildRail(fixtures){
+  const rail=document.getElementById("rail"); rail.innerHTML="";
+  fixtures.forEach(m=>{
+    const d=document.createElement("div"); d.className="match";
+    const sc = m.hs!=null ? `${m.hs}–${m.as}` : "vs";
+    const st = m.status==="live"?`<span class="dot"></span>LIVE ${m.minute}'`
+            : m.status==="final"?"FULL TIME":"SCHEDULED";
+    d.innerHTML=`<div class="st ${m.status==="final"?"final":m.status==="live"?"live":"sched"}">${st}</div>
+      <div class="tm"><span>${m.home}</span><span class="sc">${m.hs!=null?m.hs:""}</span></div>
+      <div class="tm"><span>${m.away}</span><span class="sc">${m.as!=null?m.as:""}</span></div>`;
+    d.onclick=()=>{document.querySelectorAll(".match").forEach(x=>x.classList.remove("sel"));
+      d.classList.add("sel");};
+    rail.appendChild(d);
+  });
+}
+
+// try live fixtures; fall back to samples
+function initRail(){
+  buildRail(SAMPLE_FIXTURES);
+  fetch("https://wcpa26.com/api/fixtures.json",{mode:"cors"})
+    .then(r=>r.ok?r.json():Promise.reject())
+    .then(data=>{
+      const list=(data.fixtures||data||[]).slice(0,12).map(f=>({
+        home:f.home||f.home_team, away:f.away||f.away_team,
+        hs:f.home_score??f.hs??null, as:f.away_score??f.as??null,
+        status:f.status||"scheduled", minute:f.minute||0}));
+      if(list.length){buildRail(list); document.getElementById("src").textContent="live · wcpa26.com";}
+    }).catch(()=>{});
+}
+
+buildGoalSel(); initRail(); loadGoal(GOALS[0]);
+</script>
+</body>
+</html>
