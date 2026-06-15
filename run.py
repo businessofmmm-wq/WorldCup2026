@@ -271,3 +271,130 @@ def main():
 
 if __name__ == "__main__":
     main()
+def cmd_audit(args):
+    from tools import audit
+    raise SystemExit(audit.main([]))
+
+
+def cmd_simvar(args):
+    from models import variance
+    variance_args = []
+    if args.num is not None:
+        variance_args.extend(["-n", str(args.num)])
+    if args.runs is not None:
+        variance_args.extend(["-r", str(args.runs)])
+    variance.main(variance_args)
+
+
+def cmd_cv(args):
+    from tools import cv_tactics
+    raise SystemExit(cv_tactics.main([
+        args.clip,
+        "--home",
+        args.home,
+        "--away",
+        args.away,
+        "--date",
+        args.date,
+    ]))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="World Cup 2026 prediction engine â€” command line.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="COMMAND")
+    subparsers.required = True
+
+    subparsers.add_parser("health", help="DB + data snapshot").set_defaults(func=cmd_health)
+    subparsers.add_parser("init", help="create/upgrade the schema").set_defaults(func=cmd_init)
+
+    ingest = subparsers.add_parser("ingest", help="results | live | news | xg | all")
+    ingest.add_argument("what", nargs="?", default="all", choices=["results", "live", "news", "xg", "all"])
+    ingest.set_defaults(func=cmd_ingest)
+
+    subparsers.add_parser("train", help="recompute Elo + Dixon-Coles ratings").set_defaults(func=cmd_train)
+
+    predict = subparsers.add_parser("predict", help="single-fixture prediction")
+    predict.add_argument("home")
+    predict.add_argument("away")
+    predict.add_argument("--home", dest="home_field", action="store_true", help="treat the first team as the home side")
+    predict.set_defaults(func=cmd_predict)
+
+    backtest = subparsers.add_parser("backtest", help="leakage-free accuracy backtest")
+    backtest.add_argument("year", nargs="?", type=int, default=2018)
+    backtest.add_argument("--compare", action="store_true", help="compare bivariate-Poisson vs Dixon-Coles")
+    backtest.add_argument("--refit", type=int, default=45, help="refit interval in days")
+    backtest.set_defaults(func=cmd_backtest)
+
+    subparsers.add_parser("tune", help="grid-tune params on held-out RPS").set_defaults(func=cmd_tune)
+    subparsers.add_parser("calibrate", help="fit the ensemble temperature").set_defaults(func=cmd_calibrate)
+
+    simulate = subparsers.add_parser("simulate", help="Monte Carlo the whole tournament")
+    simulate.add_argument("runs", nargs="?", type=int, default=config.SIM_RUNS)
+    simulate.set_defaults(func=cmd_simulate)
+
+    subparsers.add_parser("groups", help="official 2026 final draw + group tables").set_defaults(func=cmd_groups)
+
+    news = subparsers.add_parser("news", help="latest tagged headlines")
+    news.add_argument("team", nargs="?")
+    news.set_defaults(func=cmd_news)
+
+    rankings = subparsers.add_parser("rankings", help="current Elo top-N")
+    rankings.add_argument("n", nargs="?", type=int, default=25)
+    rankings.set_defaults(func=cmd_rankings)
+
+    subparsers.add_parser("refresh", help="live+news inflow -> retrain -> resim").set_defaults(func=cmd_refresh)
+
+    loop = subparsers.add_parser("loop", help="run refresh forever every N seconds")
+    loop.add_argument("secs", nargs="?", type=int, default=1800)
+    loop.set_defaults(func=cmd_loop)
+
+    viz = subparsers.add_parser("viz", help="launch the retro dashboard")
+    viz.add_argument("port", nargs="?", type=int, default=8008)
+    viz.set_defaults(func=cmd_viz)
+
+    export = subparsers.add_parser("export", help="snapshot the dashboard to static files")
+    export.add_argument("dir", nargs="?", default="dist")
+    export.add_argument("--no-matrix", action="store_true", help="skip matrix export")
+    export.set_defaults(func=cmd_export)
+
+    loadtest = subparsers.add_parser("loadtest", help="load-test the static build")
+    loadtest.add_argument("target")
+    loadtest.set_defaults(func=cmd_loadtest)
+
+    subparsers.add_parser("ogcard", help="(re)generate the original OG share card").set_defaults(func=cmd_ogcard)
+    subparsers.add_parser("graph", help="draw the backend connected graph").set_defaults(func=cmd_graph)
+    subparsers.add_parser("audit", help="security + stability + load + hygiene gate").set_defaults(func=cmd_audit)
+
+    simvar = subparsers.add_parser("simvar", help="variance-reduction benchmark")
+    simvar.add_argument("-n", "--num", type=int, default=None, help="sample size for variance benchmark")
+    simvar.add_argument("-r", "--runs", type=int, default=None, help="simulation run count for benchmark")
+    simvar.set_defaults(func=cmd_simvar)
+
+    cv = subparsers.add_parser("cv", help="Quantum Tactics CV pass")
+    cv.add_argument("clip")
+    cv.add_argument("--home", required=True)
+    cv.add_argument("--away", required=True)
+    cv.add_argument("--date", required=True)
+    cv.set_defaults(func=cmd_cv)
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+    try:
+        args.func(args)
+    except KeyboardInterrupt:
+        print("\nInterrupted")
+    except Exception as exc:
+        print(f"ERROR: {exc}")
+        raise
+
+
+if __name__ == "__main__":
+    main()
