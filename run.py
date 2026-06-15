@@ -46,7 +46,7 @@ except (AttributeError, ValueError):  # non-reconfigurable stream — fine
 import config
 import db
 from sources import results as src_results
-from sources import sportsdb as src_live
+from sources import footballdata as src_live  # live scores via football-data.org v4 (was: sportsdb)
 from sources import news as src_news
 from sources import statsbomb as src_xg
 from models import elo as elo_mod
