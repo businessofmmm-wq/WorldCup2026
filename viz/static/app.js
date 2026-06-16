@@ -354,20 +354,24 @@ function renderGroups(g) {
         return (Y.pts - X.pts) || ((Y.gf - Y.ga) - (X.gf - X.ga)) || (Y.gf - X.gf) || (y.adv - x.adv); }
       return y.adv - x.adv;
     });
-    const rows = teams.map((t, i) => {
+    const isReal = mode === 'real';
+    const rowsHtml = teams.map((t, i) => {
       const s = tbl[t.team] || { p: 0, pts: 0, gf: 0, ga: 0, w: 0, d: 0, l: 0 };
-      const gd = s.gf - s.ga, qual = (mode === 'real' && i < 2) ? ' qual' : '';
-      const left = `<span class="gpos${qual}">${i + 1}</span>${flagHTML(t.flag, 'flag-sm', t.team)}`;
-      if (mode === 'real') {
+      const gd = s.gf - s.ga, qual = (isReal && i < 2) ? ' qual' : '';
+      if (isReal) {
         const fc = (form[t.team] || []).slice(-5).map(r => `<i class="fc fc-${r}" title="${r}"></i>`).join('') || '<span class="fc-none">—</span>';
         return `
-      <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
-        ${left}
-        <span class="gnm">${esc(t.team)}<small>P${s.p} · ${gd >= 0 ? '+' : ''}${gd} · ${esc(t.confed)}</small></span>
-        <span class="gform" title="${s.w}W ${s.d}D ${s.l}L">${fc}</span>
-        <span class="gpts">${s.pts}<small>pts</small></span>
-      </div>`;
+      <tr class="gtr profile-link${qual}" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
+        <td class="gpos${qual}">${i + 1}</td>
+        <td class="gteam">${flagHTML(t.flag, 'flag-sm', t.team)}<span class="gtnm">${esc(t.team)}</span></td>
+        <td>${s.p}</td><td>${s.w}</td><td>${s.d}</td><td>${s.l}</td>
+        <td class="gnum">${s.gf}</td><td class="gnum">${s.ga}</td>
+        <td class="gdcell">${gd >= 0 ? '+' : ''}${gd}</td>
+        <td class="gptd">${s.pts}</td>
+        <td class="gformcell" title="${s.w}W ${s.d}D ${s.l}L">${fc}</td>
+      </tr>`;
       }
+      const left = `<span class="gpos">${i + 1}</span>${flagHTML(t.flag, 'flag-sm', t.team)}`;
       return `
       <div class="grow profile-link" data-team="${esc(t.team)}" role="button" tabindex="0" aria-label="Open ${esc(t.team)} profile">
         ${left}
@@ -378,11 +382,14 @@ function renderGroups(g) {
         </div>
       </div>`;
     }).join('');
-    const head = mode === 'real'
+    const body = isReal
+      ? `<div class="gtable-wrap"><table class="gtable"><thead><tr><th class="gth-pos">#</th><th class="ta-l">Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th><th class="ta-l gth-form">Form</th></tr></thead><tbody>${rowsHtml}</tbody></table></div>`
+      : rowsHtml;
+    const head = isReal
       ? `<span class="gname">Group ${k}</span><span class="gtag">${anyPlayed ? 'Table · form' : 'Not started'}</span>`
       : `<span class="gname">Group ${k}</span>${k === death ? '<span class="gtag death">💀 Group of Death</span>' : '<span class="gtag">Adv%</span>'}`;
-    return `<div class="group-card" data-mk="${esc(k)}" style="--rot:${rots[gi % rots.length]}deg">
-      <div class="gc-head">${head}</div>${rows}</div>`;
+    return `<div class="group-card${isReal ? ' real' : ''}" data-mk="${esc(k)}" style="--rot:${isReal ? 0 : rots[gi % rots.length]}deg">
+      <div class="gc-head">${head}</div>${body}</div>`;
   }).join(''));
 }
 
@@ -664,7 +671,7 @@ function renderFixtures(data) {
   $('#mcTabUp').textContent = `Upcoming${data.upcoming?.length ? ' (' + data.upcoming.length + ')' : ''}`;
   // default to results once any exist, else upcoming — but while a match is in
   // play, open on Upcoming so the live action is front-and-centre.
-  if (!STATE.mcTab) STATE.mcTab = liveFixtures(data).length ? 'upcoming' : (rec.played ? 'completed' : 'upcoming');
+  if (!STATE.mcTab) STATE.mcTab = 'all';
   paintFixtures();
 }
 function paintFixtures() {
@@ -675,31 +682,58 @@ function paintFixtures() {
     b.classList.toggle('active', on);
     b.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  const completedTab = tab === 'completed';
-  // Any match that has kicked off but isn't scored yet is pinned to the top of
-  // the list under a LIVE banner — shown on EITHER tab so a match in play is
-  // never hidden — and pulled out of the day grouping so it never shows twice.
+  // Live matches (kicked off, not yet scored) are pinned to the top under a LIVE
+  // banner on every tab, and pulled out of the day grouping so they never repeat.
   const live = liveFixtures(data);
   const liveSet = new Set(live.map(m => m.home.team + '|' + m.away.team));
-  // Upcoming reads forward in time; Results reads backward (latest at the top —
-  // with 104 matches over five weeks nobody scrolls for last night's score).
-  const base = [...((completedTab ? data.completed : data.upcoming) || [])]
-    .filter(m => !liveSet.has(m.home.team + '|' + m.away.team))
-    .sort((a, b) => completedTab ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
+  const notLive = m => !liveSet.has(m.home.team + '|' + m.away.team);
+  let html = '';
+  if (live.length) {
+    html += `<div class="mc-day mc-day-live"><span class="livedot"></span>LIVE NOW · ${live.length} match${live.length > 1 ? 'es' : ''} underway</div>`;
+    html += live.map(m => mcCard(m, false)).join('');
+  }
 
+  // "All" — one chronological page: results + upcoming merged, earliest → latest,
+  // grouped by the viewer's local day with a marker on today's matches. A match
+  // renders as a result the instant it has a score, else as a called fixture.
+  if (tab === 'all') {
+    const all = [...((data.completed) || []), ...((data.upcoming) || [])]
+      .filter(notLive)
+      .sort((a, b) => kickMs(a) - kickMs(b));
+    if (!all.length && !live.length) {
+      $('#mcList').innerHTML = `<p class="loading">No fixtures yet — check back from ${fmtDate(data.kickoff)}.</p>`;
+      return;
+    }
+    const now = new Date();
+    const todayKey = `${WK[now.getDay()]} ${now.getDate()} ${MO[now.getMonth()]}`;
+    let day = null;
+    for (const m of all) {
+      const k = fmtKick(m.kickoff);
+      const label = k ? k.day : fmtDate(m.date);
+      if (label !== day) {
+        day = label;
+        const today = label === todayKey;
+        html += `<div class="mc-day${today ? ' mc-day-today' : ''}">${label}${today ? '<span class="mc-today-tag">TODAY</span>' : ''}</div>`;
+      }
+      const done = m.home_score != null && m.away_score != null;
+      html += mcCard(m, done);
+    }
+    $('#mcList').innerHTML = html;
+    syncLivePill();
+    return;
+  }
+
+  // Single-status tabs: Upcoming reads forward; Results reads backward (latest first).
+  const completedTab = tab === 'completed';
+  const base = [...((completedTab ? data.completed : data.upcoming) || [])]
+    .filter(notLive)
+    .sort((a, b) => completedTab ? kickMs(b) - kickMs(a) : kickMs(a) - kickMs(b));
   if (!base.length && !live.length) {
     $('#mcList').innerHTML = `<p class="loading">${completedTab
       ? 'No results yet — the tournament hasn\'t kicked off. Check back from ' + fmtDate(data.kickoff) + '.'
       : 'No upcoming fixtures scheduled.'}</p>`;
     return;
   }
-  let html = '';
-  if (live.length) {
-    html += `<div class="mc-day mc-day-live"><span class="livedot"></span>LIVE NOW · ${live.length} match${live.length > 1 ? 'es' : ''} underway</div>`;
-    html += live.map(m => mcCard(m, false)).join('');
-  }
-  // group by the viewer's LOCAL day (a late kickoff can fall on a different
-  // calendar day depending where in the world you are), with a day header
   let day = null;
   for (const m of base) {
     const k = fmtKick(m.kickoff);

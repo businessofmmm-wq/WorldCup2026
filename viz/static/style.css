@@ -1241,3 +1241,49 @@ body.modal-open { overflow: hidden; }
 .fc-W { background: var(--teal); } .fc-D { background: #8a8374; } .fc-L { background: var(--red); }
 .fc-none { color: var(--ink-soft); font-size: .8rem; }
 .gpos.qual { background: var(--teal); color: #fff; border-radius: 5px; }
+
+/* ============================================================================
+   Reality standings table (groups) · chronological TODAY marker ·
+   iPhone Safari overall sizing + spacing pass.   (appended)
+   ============================================================================ */
+.group-card.real { transform: none !important; padding: 12px 12px 14px; }
+.gtable-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.gtable { width: 100%; border-collapse: collapse; font-family: var(--font-badge, inherit); font-size: .82rem; }
+.gtable th, .gtable td { padding: 6px 5px; text-align: center; white-space: nowrap; border-bottom: 1px solid var(--line); }
+.gtable thead th { font-size: .66rem; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-soft); font-weight: 700; border-bottom: 1.5px solid var(--card-edge); }
+.gtable th.ta-l, .gtable td.gteam { text-align: left; }
+.gtable td.gteam { display: flex; align-items: center; gap: 7px; min-width: 116px; }
+.gtable td.gteam .gtnm { overflow: hidden; text-overflow: ellipsis; }
+.gtable td.gptd { font-weight: 800; color: var(--ink); }
+.gtable td.gdcell { color: var(--ink-soft); }
+.gtable td.gpos { color: var(--ink-soft); font-weight: 700; }
+.gtable td.gpos.qual { background: var(--teal); color: #fff; border-radius: 5px; }
+.gtable tr.gtr.qual td { background: color-mix(in srgb, var(--teal) 13%, transparent); }
+.gtable tr.gtr { cursor: pointer; }
+.gtable tr.gtr:hover td { background: color-mix(in srgb, var(--gold) 12%, transparent); }
+.gtable td.gformcell { display: flex; gap: 3px; align-items: center; justify-content: flex-start; }
+.gtable td.gformcell .fc { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.gtable .gth-pos { width: 1.4rem; }
+
+/* chronological "All" view — today divider */
+.mc-day-today { color: var(--gold); border-color: var(--gold) !important; }
+.mc-today-tag { margin-left: 8px; font-size: .6rem; font-weight: 800; letter-spacing: .08em;
+  background: var(--gold); color: #1a1206; padding: 1px 7px; border-radius: 999px; vertical-align: middle; }
+
+/* iPhone Safari — stop text auto-inflation/jitter and kill horizontal overflow */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+html, body { max-width: 100%; overflow-x: hidden; }
+img, svg, table { max-width: 100%; }
+@media (max-width: 640px) {
+  .page { padding-top: 26px; padding-bottom: 26px; }
+  .page-head h2 { font-size: clamp(1.5rem, 8vw, 2.1rem); line-height: 1.06; }
+  .page-tag { font-size: .9rem; line-height: 1.5; }
+  .groups-grid { gap: 14px; }
+  .gtable { font-size: .78rem; }
+  .gtable th, .gtable td { padding: 5px 4px; }
+  .gtable td.gteam { min-width: 92px; gap: 5px; }
+  .mc-card { padding: 9px 10px; }
+}
+@media (max-width: 400px) {
+  .gtable td.gteam .gtnm { max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
+}

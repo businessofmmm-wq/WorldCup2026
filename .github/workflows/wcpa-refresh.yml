@@ -40,13 +40,16 @@ jobs:
                       try: kicks.append(iso(m["kickoff"]))
                       except: pass
           except: pass
-          live    = any(-10 <= mins(k) <= 155 for k in kicks)
-          between = any(-360 <= mins(k) <= 360 for k in kicks)
-          state = "live" if live else ("between" if between else "idle")
+          # Even cadence: a wide window around any kickoff refreshes every ~5 min
+          # (covers full-time + stoppage so a result is never missed); at all other
+          # times a steady ~20 min. footballdata backfills finished games, so a
+          # 20-min off-peak beat recovers anything a skipped beat left behind.
+          live  = any(-15 <= mins(k) <= 175 for k in kicks)
+          state = "live" if live else "steady"
           try:
               age = mins(iso(get("meta.json")["exported"]))
           except: age = 9999
-          threshold = {"live":4.5, "between":9.0, "idle":58.0}[state]
+          threshold = {"live": 4.5, "steady": 19.0}[state]
           run = "true" if age >= threshold else "false"
           print("run=%s" % run); print("state=%s" % state)
           PY
