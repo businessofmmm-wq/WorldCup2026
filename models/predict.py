@@ -21,11 +21,14 @@ from models import draw_model
 
 
 def load_goals_model():
-    """Load the goals model selected by config.GOALS_MODEL (bivariate Poisson or
-    Dixon-Coles). Both expose the same GoalsModel interface, so the rest of the
-    engine is oblivious to which joint scoreline law is in play."""
+    """Load the goals model selected by config.GOALS_MODEL (bivariate Poisson,
+    diagonal-inflated Poisson, or Dixon-Coles). All expose the same GoalsModel
+    interface, so the rest of the engine is oblivious to which joint scoreline
+    law is in play."""
     if config.GOALS_MODEL == "bivpois":
         return bivpois_mod.load()
+    if config.GOALS_MODEL == "bivpois_diag":
+        return bivpois_mod.load_diagonal()
     return poisson_mod.load()
 
 # Empirical maximum draw probability for an evenly matched international.

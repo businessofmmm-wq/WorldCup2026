@@ -89,8 +89,9 @@ def cmd_train(_args):
     print("[dixon-coles]"); dc = poisson_mod.fit()
     # Bivariate Poisson reuses the just-fit DC marginals and adds the shared
     # covariance lambda3, so the attack/defence MLE is not paid for twice. Always
-    # fit it (cheap) to keep it warm — selecting it live is then just a flag flip.
+    # fit both BP variants (cheap 1-D fits) to keep them warm.
     print("[bivariate-poisson]"); bivpois.fit(base=dc)
+    print("[bivariate-poisson-diagonal]"); bivpois.fit_diagonal(base=dc)
     print("training complete")
 
 
@@ -157,15 +158,18 @@ def cmd_refresh(_args):
     from models import draw_model
     from models import bivpoisson as bivpois
 
+    def _fit_goals():
+        # Fit DC once; both BP variants ride the same marginals — no double fit.
+        dc = poisson_mod.fit(verbose=False)
+        bivpois.fit(base=dc)
+        bivpois.fit_diagonal(base=dc)
+
     steps = [
         ("live", lambda: src_live.ingest()),
         ("news", lambda: src_news.ingest(verbose=False)),
         ("elo", lambda: elo_mod.compute(verbose=False)),
         ("draw-model", lambda: draw_model.fit(verbose=False)),
-        # BP rides the just-fit DC marginals, so the live goals model can't
-        # drift from the ratings between full `train` runs.
-        ("dixon-coles + bivpois",
-         lambda: bivpois.fit(base=poisson_mod.fit(verbose=False))),
+        ("dixon-coles + bivpois", _fit_goals),
         ("simulate", lambda: Tournament().run(
             runs=config.REFRESH_RUNS, method=config.REFRESH_METHOD,
             verbose=True, persist=True)),

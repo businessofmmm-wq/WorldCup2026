@@ -256,23 +256,24 @@ def report(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
 # --------------------------------------------------------------------------- #
 # Goals-model comparison: bivariate Poisson vs Dixon-Coles (head-to-head)
 # --------------------------------------------------------------------------- #
-def _goals_walk_both(matches, test_start, lam3, *, refit_days=45,
+def _goals_walk_both(matches, test_start, lam3, diag_factor=1.0, *, refit_days=45,
                      recent_years=config.DC_RECENT_YEARS,
                      half_life=config.DC_HALF_LIFE_DAYS, reg=config.DC_REG,
                      rho=config.DC_RHO, iters_cold=config.DC_ITERS,
                      iters_warm=60, warm=True):
-    """One leakage-free walk-forward, two predictions per test match.
+    """One leakage-free walk-forward, three predictions per test match.
 
     Refits the shared Dixon-Coles attack/defence exactly as `dc_walkforward`
-    does, then at each match reads off BOTH the DC 1X2 and the bivariate-Poisson
-    1X2 (same marginals, shared covariance `lam3`). Refitting once keeps the two
-    streams perfectly aligned and halves the cost. Returns (dc_out, bp_out).
+    does, then reads off DC, BP (shared covariance `lam3`) and diagonal-inflated
+    BP (`diag_factor`) 1X2s per match. One refit serves all three — they share
+    the same marginals. Returns (dc_out, bp_out, dibp_out).
     """
     from models import bivpoisson as bp
     dc_rows = [(d, h, a, hs, as_, neu) for d, h, a, hs, as_, tourn, neu in matches]
     dc_out: dict[int, tuple] = {}
     bp_out: dict[int, tuple] = {}
-    model = bpm = None
+    dibp_out: dict[int, tuple] = {}
+    model = bpm = dibpm = None
     next_refit = test_start
     for i, (d, home, away, hs, as_, tourn, neutral) in enumerate(matches):
         if d < test_start:
@@ -286,12 +287,17 @@ def _goals_walk_both(matches, test_start, lam3, *, refit_days=45,
                 init=(model if warm else None))
             bpm = bp.BivariatePoissonModel(model.attack, model.defence,
                                            model.mu, model.gamma, lam3)
+            dibpm = bp.DiagonalInflatedBivariatePoissonModel(
+                model.attack, model.defence, model.mu, model.gamma,
+                lam3, diag_factor)
             next_refit = d + dt.timedelta(days=refit_days)
         pd_ = model.predict(home, away, neutral=neutral)
         pb_ = bpm.predict(home, away, neutral=neutral)
+        pdb_ = dibpm.predict(home, away, neutral=neutral)
         dc_out[i] = (pd_["p_home"], pd_["p_draw"], pd_["p_away"])
         bp_out[i] = (pb_["p_home"], pb_["p_draw"], pb_["p_away"])
-    return dc_out, bp_out
+        dibp_out[i] = (pdb_["p_home"], pdb_["p_draw"], pdb_["p_away"])
+    return dc_out, bp_out, dibp_out
 
 
 def compare(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
@@ -306,17 +312,21 @@ def compare(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
         test_start = dt.date(2018, 1, 1)
     matches = load_matches()
 
-    # lambda3 from pre-test data only (honest walk-forward).
+    # lambda3 and diagonal_factor from pre-test data only (honest walk-forward).
     lo = test_start - dt.timedelta(days=365 * config.DC_RECENT_YEARS)
     pre = [(d, h, a, hs, as_, neu)
            for d, h, a, hs, as_, tourn, neu in matches if lo <= d < test_start]
     base = poisson_mod.fit_params(pre, test_start)
     lam3 = bp.fit_lambda3(base, pre, test_start, verbose=True)
+    bpm_pre = bp.BivariatePoissonModel(base.attack, base.defence, base.mu,
+                                       base.gamma, lam3)
+    diag_factor = bp.fit_diagonal_factor(bpm_pre, pre, test_start, verbose=True)
     print(f"\nGoals-model compare — test from {test_start} "
-          f"(DC refit every {refit_days}d, lambda3={lam3:.4f})\n")
+          f"(DC refit every {refit_days}d, "
+          f"lambda3={lam3:.4f}, diag_factor={diag_factor:.4f})\n")
 
-    dc_probs, bp_probs = _goals_walk_both(matches, test_start, lam3,
-                                          refit_days=refit_days)
+    dc_probs, bp_probs, dibp_probs = _goals_walk_both(
+        matches, test_start, lam3, diag_factor, refit_days=refit_days)
     # Production-faithful Elo (empirical draw model fit pre-test), as in report().
     elo_kw = {}
     try:
@@ -332,36 +342,46 @@ def compare(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
     w = we / (we + wd)
     temp = config.ENSEMBLE_TEMPERATURE
     pairs: dict[str, list] = {k: [] for k in
-                              ("elo", "dc", "bp", "ens_dc", "ens_bp")}
+                              ("elo", "dc", "bp", "dibp", "ens_dc", "ens_bp", "ens_dibp")}
     for i, (d, home, away, hs, as_, tourn, neutral) in enumerate(matches):
         if d < test_start or i not in dc_probs:
             continue
         o = metrics.outcome_index(hs, as_)
-        ep, dp, bpp = elo_probs[i], dc_probs[i], bp_probs[i]
+        ep, dp, bpp, dibpp = elo_probs[i], dc_probs[i], bp_probs[i], dibp_probs[i]
         en_dc = _temper(tuple(w * ep[k] + (1 - w) * dp[k] for k in range(3)), temp)
         en_bp = _temper(tuple(w * ep[k] + (1 - w) * bpp[k] for k in range(3)), temp)
+        en_dibp = _temper(tuple(w * ep[k] + (1 - w) * dibpp[k] for k in range(3)), temp)
         pairs["elo"].append((ep, o))
         pairs["dc"].append((dp, o))
         pairs["bp"].append((bpp, o))
+        pairs["dibp"].append((dibpp, o))
         pairs["ens_dc"].append((en_dc, o))
         pairs["ens_bp"].append((en_bp, o))
+        pairs["ens_dibp"].append((en_dibp, o))
 
-    order = ["elo", "dc", "bp", "ens_dc", "ens_bp"]
+    order = ["elo", "dc", "bp", "dibp", "ens_dc", "ens_bp", "ens_dibp"]
     label = {"elo": "Elo", "dc": "Dixon-Coles", "bp": "Bivariate-Poisson",
-             "ens_dc": "Ensemble (Elo+DC)", "ens_bp": "Ensemble (Elo+BP)"}
-    print(f"  {'Model':<20}{'N':>7}{'RPS':>9}{'LogLoss':>10}{'Brier':>9}{'Acc':>8}")
-    print("  " + "-" * 63)
+             "dibp": "Diagonal-Inflated BP",
+             "ens_dc": "Ensemble (Elo+DC)", "ens_bp": "Ensemble (Elo+BP)",
+             "ens_dibp": "Ensemble (Elo+DiBP)"}
+    print(f"  {'Model':<22}{'N':>7}{'RPS':>9}{'LogLoss':>10}{'Brier':>9}{'Acc':>8}")
+    print("  " + "-" * 65)
     results = {}
     for key in order:
         m = metrics.score_stream(pairs[key])
         results[key] = m
-        print(f"  {label[key]:<20}{m['n']:>7}{m['rps']:>9.4f}"
+        print(f"  {label[key]:<22}{m['n']:>7}{m['rps']:>9.4f}"
               f"{m['log_loss']:>10.4f}{m['brier']:>9.4f}{m['acc']:>8.3f}")
-    d_rps = results["bp"]["rps"] - results["dc"]["rps"]
-    d_ens = results["ens_bp"]["rps"] - results["ens_dc"]["rps"]
-    print(f"\n  BP - DC RPS (goals only): {d_rps:+.5f}"
-          f"   |   in ensemble: {d_ens:+.5f}   (negative = BP better)")
-    return {"results": results, "lam3": lam3, "test_start": test_start}
+    d_rps_bp = results["bp"]["rps"] - results["dc"]["rps"]
+    d_rps_dibp = results["dibp"]["rps"] - results["dc"]["rps"]
+    d_ens_bp = results["ens_bp"]["rps"] - results["ens_dc"]["rps"]
+    d_ens_dibp = results["ens_dibp"]["rps"] - results["ens_dc"]["rps"]
+    print(f"\n  BP - DC RPS (goals only):   {d_rps_bp:+.5f}"
+          f"   |   in ensemble: {d_ens_bp:+.5f}   (negative = better)")
+    print(f"  DiBP - DC RPS (goals):      {d_rps_dibp:+.5f}"
+          f"   |   in ensemble: {d_ens_dibp:+.5f}   (negative = better)")
+    return {"results": results, "lam3": lam3, "diag_factor": diag_factor,
+            "test_start": test_start}
 
 
 if __name__ == "__main__":

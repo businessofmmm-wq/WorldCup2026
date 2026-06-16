@@ -131,24 +131,29 @@ DC_REG = 0.08               # L2 shrinkage on attack/defence (curbs minnow overf
 
 # Goals model selecting the JOINT scoreline law (the marginals — time-decayed
 # attack/defence — are shared either way):
-#   "bivpois"     -> bivariate Poisson with a fitted shared covariance lambda3,
-#                    a proper joint distribution (models/bivpoisson.py).
-#   "dixon_coles" -> independent Poisson + the four-cell tau low-score patch.
+#   "bivpois"          -> bivariate Poisson with a fitted shared covariance lambda3,
+#                         a proper joint distribution (models/bivpoisson.py).
+#   "bivpois_diag"     -> diagonal-inflated BP: adds an explicit diagonal_factor
+#                         that boosts tied-score cells (0-0, 1-1, 2-2, etc.) to
+#                         increase draw mass beyond the BP baseline. Fit via 1-D MLE.
+#   "dixon_coles"      -> independent Poisson + the four-cell tau low-score patch.
 # Held-out verdict — SETTLED on the full window (`run.py backtest 2018 --compare`,
 # 8,009 held-out matches from 2018-01-01): bivariate-Poisson now WINS on the goals
 # model alone (RPS 0.1686 vs DC 0.1691; better LogLoss 0.8681 and Brier 0.5084
 # too), and lambda3 fits to a healthy +0.058 on the modern window — the coupling
 # is real here, not collapsed as it was pre-2022. In the full Elo+goals ensemble
 # the two are a dead heat (RPS 0.1668 BP vs 0.1667 DC — a 4th-decimal, noise-level
-# gap). So bivpois stays the default, now empirically justified rather than by
-# choice. Flip to "dixon_coles" to revert — both stay wired. (A diagonal-inflated
-# BP could sharpen draw mass further, but the ensemble is already tied and launch
-# is imminent — deferred to a post-launch experiment; see NEXTSTEPS.md.)
+# gap). So bivpois stays the default. The diagonal-inflated BP offers a 3rd
+# experimental option; backtest it via `run.py backtest --compare` to validate.
 GOALS_MODEL = "bivpois"
 
 # Bivariate-Poisson shared covariance (models/bivpoisson.py).
 BP_MAX_LAMBDA3 = 0.5        # upper bracket for the 1-D MLE of the shared term l3
 BP_LAMBDA3_FALLBACK = 0.0   # l3 used by load() when no fitted params file exists
+
+# Diagonal-inflated BP parameters (models/bivpoisson.fit_diagonal).
+BP_DIAG_MAX_FACTOR = 2.0    # upper bracket for diagonal inflation factor
+BP_DIAG_FACTOR_FALLBACK = 1.0  # factor used by load_diagonal() when no params file
 
 # Ensemble weighting between the Elo 1X2 and the goals-model (DC/BP) 1X2.
 ENSEMBLE_ELO_WEIGHT = 0.45

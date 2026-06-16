@@ -52,6 +52,7 @@ from models import poisson as poisson_mod
 from models.poisson import GoalsModel
 
 _PARAMS_FILE = os.path.join(config.DATA_DIR, "bivpois_params.json")
+_DIAG_PARAMS_FILE = os.path.join(config.DATA_DIR, "bivpois_diag_params.json")
 
 
 # --------------------------------------------------------------------------- #
@@ -115,6 +116,52 @@ class BivariatePoissonModel(GoalsModel):
                 grid[i][j] = p
                 total += p
         if total > 0:   # renormalise the truncated-grid mass back to 1
+            for i in range(max_goals + 1):
+                for j in range(max_goals + 1):
+                    grid[i][j] /= total
+        return grid, mean_h, mean_a
+
+
+# --------------------------------------------------------------------------- #
+# Diagonal-Inflated Bivariate-Poisson Model
+# --------------------------------------------------------------------------- #
+class DiagonalInflatedBivariatePoissonModel(BivariatePoissonModel):
+    """Bivariate-Poisson with an extra parameter boosting tied scores (diagonal).
+
+    In addition to the shared covariance l3, this variant fits a `diagonal_factor`
+    that multiplies probabilities on the diagonal cells (where home goals =
+    away goals: 0-0, 1-1, 2-2, etc.). This explicitly captures the empirical
+    excess of draws in international football above the bivariate-Poisson baseline.
+
+    The factor is fit via 1-D MLE on held-out matches, holding l1/l2/l3 fixed
+    from the base BP model. After fitting, the grid is inflated and renormalised.
+    """
+
+    def __init__(self, attack, defence, mu, gamma, lam3: float,
+                 diagonal_factor: float = 1.0):
+        super().__init__(attack, defence, mu, gamma, lam3)
+        self.diagonal_factor = max(0.0, diagonal_factor)
+
+    def scoreline_grid(self, home: str, away: str, neutral: bool = True,
+                       max_goals: int | None = None):
+        max_goals = max_goals or config.DC_MAX_GOALS
+        mean_h, mean_a = self.expected_goals(home, away, neutral)
+        l3 = min(self.lam3, mean_h - 1e-6, mean_a - 1e-6)
+        l3 = l3 if l3 > 0.0 else 0.0
+        l1, l2 = mean_h - l3, mean_a - l3
+        grid = [[0.0] * (max_goals + 1) for _ in range(max_goals + 1)]
+        total = 0.0
+        # Build the base BP grid, then apply diagonal inflation
+        for i in range(max_goals + 1):
+            for j in range(max_goals + 1):
+                p = _bp_pmf(i, j, l1, l2, l3)
+                # Boost diagonal cells (draws: i == j)
+                if i == j:
+                    p *= self.diagonal_factor
+                grid[i][j] = p
+                total += p
+        # Renormalise to keep it a valid probability distribution
+        if total > 0:
             for i in range(max_goals + 1):
                 for j in range(max_goals + 1):
                     grid[i][j] /= total
@@ -198,6 +245,67 @@ def fit_lambda3(base: GoalsModel, data, as_of: dt.date, *,
     return lam3
 
 
+def fit_diagonal_factor(base: BivariatePoissonModel, data, as_of: dt.date, *,
+                        half_life: float | None = None,
+                        cap: float | None = None, verbose: bool = False) -> float:
+    """MLE the diagonal inflation factor >= 1, holding BP marginals + l3 fixed.
+
+    The factor multiplies probabilities on diagonal cells (home goals = away goals).
+    A factor > 1 explicitly boosts the draw rate above the BP baseline; == 1 means
+    no inflation. Like fit_lambda3, uses time-decayed weighting from `as_of` for
+    leakage-free walk-forward fitting.
+    """
+    half_life = config.DC_HALF_LIFE_DAYS if half_life is None else half_life
+    cap = config.BP_DIAG_MAX_FACTOR if cap is None else cap
+
+    rows = []  # (x, y, mean_h, mean_a, weight) tuples
+    for d, home, away, hs, as_, neutral in data:
+        age = (as_of - d).days
+        if age < 0:
+            continue
+        w = 0.5 ** (age / half_life)
+        mh, ma = base.expected_goals(home, away, neutral)
+        rows.append((hs, as_, mh, ma, w))
+    if not rows:
+        return 1.0
+
+    # Precompute per-match: actual scoreline prob + truncated diagonal mass.
+    # p_diag = sum_{k=0}^{DC_MAX_GOALS} P(X=k,Y=k) — the normalisation changes
+    # as factor varies: Z(factor) = (1-p_diag) + factor*p_diag.  Without that
+    # log-Z term the NLL is monotone in factor and always saturates the cap.
+    base_grids = []
+    for hs, as_, mh, ma, w in rows:
+        l3 = min(base.lam3, mh - 1e-6, ma - 1e-6)
+        l3 = l3 if l3 > 0.0 else 0.0
+        l1, l2 = mh - l3, ma - l3
+        if l1 < 1e-6:
+            l1 = 1e-6
+        if l2 < 1e-6:
+            l2 = 1e-6
+        p_actual = _bp_pmf(hs, as_, l1, l2, l3)
+        p_diag = sum(_bp_pmf(k, k, l1, l2, l3) for k in range(config.DC_MAX_GOALS + 1))
+        base_grids.append((p_actual, p_diag, hs == as_, w))
+
+    def nll(factor: float) -> float:
+        tot = 0.0
+        for p_actual, p_diag, is_draw, w in base_grids:
+            # Z = (1 - p_diag) + factor * p_diag  (renormalisation constant)
+            z = max(1e-12, 1.0 - p_diag + factor * p_diag)
+            p_norm = (p_actual * factor if is_draw else p_actual) / z
+            tot -= w * math.log(max(p_norm, 1e-12))
+        return tot
+
+    factor = _golden_min(nll, 1.0, cap)
+    if abs(factor - 1.0) < 1e-3:  # snap near-unity factors to 1.0
+        factor = 1.0
+    if verbose:
+        no_diag_nll = nll(1.0)
+        print(f"  diagonal-inflated BP fit @ {as_of}: {len(rows):,} matches, "
+              f"diagonal_factor={factor:.4f} (no inflation NLL {no_diag_nll:,.1f} -> "
+              f"{nll(factor):,.1f})")
+    return factor
+
+
 # --------------------------------------------------------------------------- #
 # Train / persist / load
 # --------------------------------------------------------------------------- #
@@ -239,6 +347,61 @@ def load() -> BivariatePoissonModel:
         pass
     return BivariatePoissonModel(base.attack, base.defence, base.mu,
                                  base.gamma, lam3)
+
+
+# --------------------------------------------------------------------------- #
+# Diagonal-Inflated Bivariate-Poisson: fit / persist / load
+# --------------------------------------------------------------------------- #
+def fit_diagonal(base: GoalsModel | None = None, persist: bool = True,
+                 verbose: bool = True) -> DiagonalInflatedBivariatePoissonModel:
+    """Fit the diagonal-inflated BP model: DC marginals + l3 + diagonal_factor.
+
+    Reuses the base BP model (l1, l2, l3) and adds a 1-D fit of the diagonal
+    inflation factor to boost draw mass beyond the BP baseline.
+    """
+    data = poisson_mod._load_matches()
+    if not data:
+        raise RuntimeError("No matches to fit on — run ingestion first.")
+    if base is None:
+        base = poisson_mod.fit_params(data, dt.date.today(), verbose=verbose)
+    bp_model = BivariatePoissonModel(base.attack, base.defence, base.mu,
+                                      base.gamma, 0.0)
+    lam3 = fit_lambda3(bp_model, data, dt.date.today(), verbose=verbose)
+    bp_model.lam3 = lam3
+    diag_factor = fit_diagonal_factor(bp_model, data, dt.date.today(),
+                                      verbose=verbose)
+    model = DiagonalInflatedBivariatePoissonModel(
+        base.attack, base.defence, base.mu, base.gamma, lam3, diag_factor)
+    if persist:
+        _persist_diagonal(lam3, diag_factor, verbose)
+    return model
+
+
+def _persist_diagonal(lam3: float, diagonal_factor: float,
+                      verbose: bool = True) -> None:
+    with open(_DIAG_PARAMS_FILE, "w", encoding="utf-8") as fh:
+        json.dump({"lambda3": lam3, "diagonal_factor": diagonal_factor,
+                   "fitted_at": dt.date.today().isoformat()}, fh)
+    if verbose:
+        print(f"  persisted lambda3={lam3:.4f}, "
+              f"diagonal_factor={diagonal_factor:.4f} -> "
+              f"{os.path.basename(_DIAG_PARAMS_FILE)}")
+
+
+def load_diagonal() -> DiagonalInflatedBivariatePoissonModel:
+    """Rebuild diagonal-inflated BP from persisted params."""
+    base = poisson_mod.load()
+    lam3 = config.BP_LAMBDA3_FALLBACK
+    diag_factor = config.BP_DIAG_FACTOR_FALLBACK
+    try:
+        with open(_DIAG_PARAMS_FILE, encoding="utf-8") as fh:
+            params = json.load(fh)
+            lam3 = float(params.get("lambda3", lam3))
+            diag_factor = float(params.get("diagonal_factor", diag_factor))
+    except (FileNotFoundError, KeyError, ValueError):
+        pass
+    return DiagonalInflatedBivariatePoissonModel(
+        base.attack, base.defence, base.mu, base.gamma, lam3, diag_factor)
 
 
 if __name__ == "__main__":
