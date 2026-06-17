@@ -1287,3 +1287,27 @@ img, svg, table { max-width: 100%; }
 @media (max-width: 400px) {
   .gtable td.gteam .gtnm { max-width: 88px; overflow: hidden; text-overflow: ellipsis; }
 }
+
+
+/* ============================================================================
+   2D mural polish — Overview default/fallback, mobile readability.   (appended)
+   Desktop layout unchanged; phones get a 2-up group grid (half the scroll) and
+   larger tap text. The mural is what most phones see (3D is desktop-default).
+   ============================================================================ */
+@media (max-width: 820px) {
+  .mural-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; align-content: start; }
+  .mural-groups .mural-h { grid-column: 1 / -1; margin-bottom: 4px; }
+  .mg-card { margin-bottom: 0; }
+}
+@media (max-width: 640px) {
+  .mural-body { gap: 18px; }
+  .mg-card { padding: 8px 10px; }
+  .mg-row { padding: 4px 0; gap: 7px; }
+  .mg-nm { font-size: .96rem; }
+  .mg-bar { width: 48px; }
+  .pulse-v { font-size: .92rem; line-height: 1.4; }
+  .altar-nm { font-size: 1.15rem; }
+}
+@media (max-width: 380px) {
+  .mural-groups { grid-template-columns: 1fr; }
+}
