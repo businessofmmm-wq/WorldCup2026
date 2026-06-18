@@ -14,6 +14,7 @@ on it; FORM_WEIGHT = 0 disables the overlay entirely.
 """
 from __future__ import annotations
 import datetime as dt
+import math
 
 import config
 from db import connect
@@ -38,7 +39,7 @@ def compute_form(base_elo: dict, *, as_of: dt.date | None = None) -> dict:
         with connect() as conn:
             rows = conn.execute(
                 """
-                SELECT match_date, home_team, away_team, home_score, away_score, neutral
+                SELECT match_date, home_team, away_team, home_score, away_score, neutral, home_xg, away_xg
                 FROM matches
                 WHERE status='finished' AND home_score IS NOT NULL AND away_score IS NOT NULL
                   AND tournament ILIKE %s AND match_date >= %s
@@ -53,12 +54,17 @@ def compute_form(base_elo: dict, *, as_of: dt.date | None = None) -> dict:
     half = max(1.0, float(config.FORM_HALFLIFE_DAYS))
     cap = float(config.FORM_CAP)
     form: dict[str, float] = {}
-    for d, home, away, hs, as_, neutral in rows:
+    for d, home, away, hs, as_, neutral, hx, ax in rows:
         ra = base_elo.get(home, config.ELO_START) + form.get(home, 0.0)
         rb = base_elo.get(away, config.ELO_START) + form.get(away, 0.0)
         ha = 0.0 if neutral else config.ELO_HOME_ADVANTAGE
         exp = elo_mod.expected_score(ra + ha, rb)            # home win-expectancy
         actual = 1.0 if hs > as_ else 0.0 if hs < as_ else 0.5
+        # blend in the "deserved" result from xG when present — rewards chance
+        # creation over scoreline luck (directly addresses draw under-pricing).
+        if getattr(config, 'FORM_XG_WEIGHT', 0) > 0 and hx is not None and ax is not None:
+            xg_perf = 1.0 / (1.0 + math.exp(-(float(hx) - float(ax)) / config.FORM_XG_SCALE))
+            actual = (1.0 - config.FORM_XG_WEIGHT) * actual + config.FORM_XG_WEIGHT * xg_perf
         gd_mult = elo_mod._gd_multiplier(hs - as_) if config.ELO_USE_GD else 1.0
         try:
             age = (today - d).days if isinstance(d, dt.date) else 0

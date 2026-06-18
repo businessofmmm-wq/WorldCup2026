@@ -171,6 +171,8 @@ FORM_K = 30.0               # per-game Elo-point scale before weighting (a K-fac
 FORM_CAP = 70.0             # max |form delta| per team across the whole tournament
 FORM_HALFLIFE_DAYS = 12.0   # recency half-life (older tournament games count for less)
 FORM_WINDOW_START = "2026-06-01"   # only matches on/after this date count as "form"
+FORM_XG_WEIGHT = 0.5        # blend "deserved" (xG) result into the form signal (0 = ignore xG)
+FORM_XG_SCALE = 0.9         # logistic scale mapping the xG margin -> deserved-win prob
 
 # Monte Carlo — the tournament held as a superposition of every possible future,
 # sampled run-by-run; each run is one collapsed "world". More runs resolve the
@@ -210,6 +212,7 @@ _TUNABLE = {
     "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
     "FORM_WEIGHT", "FORM_K", "FORM_CAP", "FORM_HALFLIFE_DAYS",
+    "FORM_XG_WEIGHT", "FORM_XG_SCALE",
 }
 _TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")
 try:
