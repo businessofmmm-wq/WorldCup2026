@@ -57,6 +57,14 @@ def elo_1x2(elo: dict, home: str, away: str, neutral: bool = True) -> dict:
 class Predictor:
     def __init__(self, elo: dict | None = None, goals: poisson_mod.GoalsModel | None = None):
         self.elo = elo if elo is not None else _load_elo()
+        # Tournament-form overlay: nudge effective Elo by current-WC performance vs
+        # expectation (recency-weighted, bounded). config.FORM_WEIGHT = 0 disables.
+        if getattr(config, "FORM_WEIGHT", 0) > 0:
+            try:
+                from models import form as _form
+                self.elo = _form.effective_elo(self.elo)
+            except Exception:
+                pass
         self.goals = goals if goals is not None else load_goals_model()
 
     def predict(self, home: str, away: str, neutral: bool = True,

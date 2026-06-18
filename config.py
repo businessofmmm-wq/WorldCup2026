@@ -162,6 +162,16 @@ ENSEMBLE_DC_WEIGHT = 0.55
 # T<1 sharpens, T>1 softens; 1.0 = no-op. Fit by `run.py calibrate`.
 ENSEMBLE_TEMPERATURE = 1.0
 
+# Tournament-form overlay (models/form.py): once WC2026 games are played, nudge a
+# team's *effective* Elo by how it performed vs the model's own expectation in this
+# tournament so far — recency-weighted and bounded so one game can't swing it. Flows
+# through the Elo half of the ensemble. FORM_WEIGHT = 0 disables it. TUNE BY BACKTEST.
+FORM_WEIGHT = 0.5            # blend fraction of the form delta into Elo (0 = off)
+FORM_K = 30.0               # per-game Elo-point scale before weighting (a K-factor)
+FORM_CAP = 70.0             # max |form delta| per team across the whole tournament
+FORM_HALFLIFE_DAYS = 12.0   # recency half-life (older tournament games count for less)
+FORM_WINDOW_START = "2026-06-01"   # only matches on/after this date count as "form"
+
 # Monte Carlo — the tournament held as a superposition of every possible future,
 # sampled run-by-run; each run is one collapsed "world". More runs resolve the
 # possibility space more finely (lean on models/variance.py — QMC/antithetic/
@@ -199,6 +209,7 @@ _TUNABLE = {
     "ELO_K_SCALE", "ELO_HOME_ADVANTAGE", "ELO_DRAW_MAX", "ELO_USE_GD",
     "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
+    "FORM_WEIGHT", "FORM_K", "FORM_CAP", "FORM_HALFLIFE_DAYS",
 }
 _TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")
 try:
