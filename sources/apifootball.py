@@ -38,6 +38,7 @@ _SEASON = int(os.environ.get("APIFOOTBALL_SEASON", "2026"))
 
 _CACHE: dict = {}
 _TTL = 600.0
+_BLOCKED = False   # set True once the API reports a plan/season block — stop wasting quota
 
 
 def configured() -> bool:
@@ -53,7 +54,8 @@ def _hdrs() -> dict:
 
 def _get(path: str, params: dict | None = None) -> list:
     """GET an endpoint, return its `response` list. Cached; never raises."""
-    if not _KEY:
+    global _BLOCKED
+    if not _KEY or _BLOCKED:
         return []
     ckey = path + "?" + "&".join(f"{k}={v}" for k, v in sorted((params or {}).items()))
     hit = _CACHE.get(ckey)
@@ -65,8 +67,14 @@ def _get(path: str, params: dict | None = None) -> list:
         r.raise_for_status()
         data = r.json() or {}
         resp = data.get("response") or []
-        if data.get("errors"):
-            print(f"  api-football {path} errors: {data['errors']}")
+        errs = data.get("errors")
+        if errs:
+            print(f"  api-football {path} errors: {errs}")
+            if "plan" in str(errs).lower() or "season" in str(errs).lower():
+                _BLOCKED = True
+                print("  api-football: free plan lacks this season (2022-2024 only) — "
+                      "players/tactics layer disabled this run; upgrade the plan or set "
+                      "APIFOOTBALL_SEASON to a covered season for testing.")
         _CACHE[ckey] = (time.time(), resp)
         return resp
     except Exception as exc:
