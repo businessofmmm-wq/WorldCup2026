@@ -135,7 +135,7 @@ def main(argv=None) -> int:
     ap.add_argument("--apply", action="store_true", help="write the blended temperature to tuned_params.json")
     ap.add_argument("--full", action="store_true", help="also run the historical tuners first")
     ap.add_argument("--blend", type=float, default=0.5, help="weight on the LIVE T vs historical (0..1)")
-    args = ap.parse_args(argv)
+    args, _ = ap.parse_known_args(argv)  # tolerate stray pasted args/comments
     print("WCPA — recalibration phase")
 
     if args.full:

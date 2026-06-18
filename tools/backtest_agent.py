@@ -144,7 +144,7 @@ def main(argv=None) -> int:
     ap.add_argument("--refit", type=int, default=45)
     ap.add_argument("--hist-only", action="store_true")
     ap.add_argument("--live-only", action="store_true")
-    args = ap.parse_args(argv)
+    args, _ = ap.parse_known_args(argv)  # tolerate stray pasted args/comments
     print("WCPA — backtest agent")
     if not args.live_only:
         historical(args.year, args.refit)
