@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# WCPA pre-commit gate (Continue-style husky equivalent). Activate once with:
+#   git config core.hooksPath .githooks && chmod +x .githooks/pre-commit
+# Blocks a commit that won't compile or fails the security/hygiene audit.
+set -e
+echo "[pre-commit] byte-compile check…"
+python -m compileall -q run.py config.py db.py models sources tools viz
+echo "[pre-commit] audit (secrets / SQL / headers)…"
+python run.py audit
+echo "[pre-commit] OK"

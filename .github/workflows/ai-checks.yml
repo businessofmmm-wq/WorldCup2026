@@ -1,0 +1,47 @@
+# Continue-style AI checks on pull requests. Runs the open-source Continue CLI (`cn`)
+# over the markdown checks in .continue/checks/ as GitHub status checks.
+#
+# REQUIRES a model API key in repo secrets (Settings -> Secrets -> Actions):
+#   ANTHROPIC_API_KEY   (or swap for your provider of choice)
+# Until that secret exists this workflow no-ops gracefully (see the guard step).
+#
+# Note: WCPA normally pushes straight to master via publish.bat. For these checks to
+# run, develop on a branch and open a PR into master; deploy automation can stay on master.
+name: ai-checks
+on:
+  pull_request:
+    branches: [master]
+
+jobs:
+  continue-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard — skip if no model key configured
+        id: guard
+        run: |
+          if [ -z "${{ secrets.ANTHROPIC_API_KEY }}" ]; then
+            echo "No ANTHROPIC_API_KEY secret set — skipping AI checks."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Continue CLI
+        if: steps.guard.outputs.run == 'true'
+        run: npm i -g @continuedev/cli
+
+      - name: Run AI checks
+        if: steps.guard.outputs.run == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: cn --check .continue/checks
