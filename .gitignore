@@ -1,5 +1,18 @@
+# Python
 __pycache__/
 *.pyc
+*.egg-info/
+
+# Virtual environment (39MB — must never be committed)
+.venv/
+venv/
+
+# OS / IDE cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
 data/dc_params.json
 data/bivpois_params.json
 .env
