@@ -792,7 +792,7 @@ function startClock() {
 // bookmaker/betting links (AU Interactive Gambling Act). Leave a value '' to
 // hide that button.
 const LINKS = {
-  tip:  'https://ko-fi.com/sambowey1110',              // Ko-fi tip jar (LIVE)
+  tip:  'https://ko-fi.com/wcpa26sam',                 // Ko-fi tip jar (LIVE)
   back: 'https://buy.stripe.com/dRm28s8AI8y0al7dan9k400',  // Stripe Payment Link (LIVE — a public, shareable URL; safe to embed. No secret/pk keys ever live here.)
 };
 function wireSupport() {
