@@ -49,9 +49,9 @@
       </span>
     </a>
     <nav class="album-index" id="albumIndex" aria-label="Album sections">
+      <a href="#path">Bracket</a>
       <a href="#whole">Overview</a>
       <a href="#groups">Groups</a>
-      <a href="#path">Bracket</a>
       <a href="#odds">Match&nbsp;Odds</a>
       <a href="#lab">Match&nbsp;Lab</a>
       <a href="#tactics">Collapse</a>
@@ -99,10 +99,29 @@
       <div class="scroll-hint">▼ flip the page</div>
     </section>
 
-    <!-- ===================== 01 · THE WHOLE (mural funnel) ===================== -->
-    <section id="whole" class="page whole">
+    <!-- ================= 01 · BRACKET + MATCHES (combined) ================= -->
+    <section id="path" class="page">
       <div class="page-head">
         <span class="page-no">01</span>
+        <h2>Bracket &amp; Matches</h2>
+        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
+      </div>
+      <div class="bracket-scroll">
+        <div class="bracket" id="bracket"></div>
+      </div>
+      <p class="page-foot" id="bracketNote"></p>
+      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
+        <button class="mc-tab active" data-mc="all" id="mcTabAll" role="tab" aria-selected="true" aria-controls="mcList">All</button>
+        <button class="mc-tab" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="false" aria-controls="mcList">Upcoming</button>
+        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
+      </div>
+      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
+    </section>
+
+    <!-- ===================== 02 · THE WHOLE (mural funnel) ===================== -->
+    <section id="whole" class="page whole">
+      <div class="page-head">
+        <span class="page-no">02</span>
         <h2>Overview</h2>
         <p class="page-tag">The entire 2026 World Cup as one living mural — the 48 funnelling to one. Every number is the model's; tap any nation to open its profile.</p>
       </div>
@@ -126,7 +145,7 @@
     <!-- =========================== 05 · GROUPS =========================== -->
     <section id="groups" class="page">
       <div class="page-head">
-        <span class="page-no">02</span>
+        <span class="page-no">03</span>
         <h2>Group Pages</h2>
         <p class="page-tag">All twelve groups. <b>Adv%</b> = chance of reaching the knockouts (top-2 or one of the 8 best 3rd-placed). Tap a nation for its profile.</p>
       </div>
@@ -135,25 +154,6 @@
         <button class="grp-btn" id="grpReal" type="button">Reality</button>
       </div>
       <div class="groups-grid" id="groupsGrid"></div>
-    </section>
-
-    <!-- ================= 06 · BRACKET + MATCHES (combined) ================= -->
-    <section id="path" class="page">
-      <div class="page-head">
-        <span class="page-no">03</span>
-        <h2>Bracket &amp; Matches</h2>
-        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
-      </div>
-      <div class="bracket-scroll">
-        <div class="bracket" id="bracket"></div>
-      </div>
-      <p class="page-foot" id="bracketNote"></p>
-      <div class="mc-tabs" role="tablist" aria-label="Match Centre view">
-        <button class="mc-tab active" data-mc="all" id="mcTabAll" role="tab" aria-selected="true" aria-controls="mcList">All</button>
-        <button class="mc-tab" data-mc="upcoming" id="mcTabUp" role="tab" aria-selected="false" aria-controls="mcList">Upcoming</button>
-        <button class="mc-tab" data-mc="completed" id="mcTabDone" role="tab" aria-selected="false" aria-controls="mcList">Results</button>
-      </div>
-      <div class="mc-list" id="mcList" role="tabpanel" aria-label="Match fixtures"><p class="loading">loading fixtures…</p></div>
     </section>
 
     <!-- ========================= 07 · TITLE ODDS ========================= -->
