@@ -161,6 +161,11 @@ ENSEMBLE_DC_WEIGHT = 0.55
 # Final temperature applied to the blended 1X2 (p_i ** (1/T), renormalised).
 # T<1 sharpens, T>1 softens; 1.0 = no-op. Fit by `run.py calibrate`.
 ENSEMBLE_TEMPERATURE = 1.0
+# Optional per-class temperature [T_home, T_draw, T_away] (models/calibrate.py).
+# When set (not None), it overrides the scalar above — an extra 2 DoF that lowers
+# calibration error (ECE) on the asymmetric 1X2 draw class. None = use scalar.
+# Fit via models.calibrate.fit_vector_temperature; keep only if backtest improves.
+ENSEMBLE_TEMPERATURE_VEC = None
 
 # Tournament-form overlay (models/form.py): once WC2026 games are played, nudge a
 # team's *effective* Elo by how it performed vs the model's own expectation in this
@@ -211,6 +216,7 @@ _TUNABLE = {
     "ELO_K_SCALE", "ELO_HOME_ADVANTAGE", "ELO_DRAW_MAX", "ELO_USE_GD",
     "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
+    "ENSEMBLE_TEMPERATURE_VEC",
     "FORM_WEIGHT", "FORM_K", "FORM_CAP", "FORM_HALFLIFE_DAYS",
     "FORM_XG_WEIGHT", "FORM_XG_SCALE",
 }

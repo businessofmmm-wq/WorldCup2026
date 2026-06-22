@@ -109,7 +109,15 @@ class Predictor:
 
 
 def _temper(p_home: float, p_draw: float, p_away: float) -> tuple[float, float, float]:
-    """Apply the calibration temperature and renormalise to a probability triple."""
+    """Apply the calibration temperature and renormalise to a probability triple.
+
+    If config.ENSEMBLE_TEMPERATURE_VEC is set (a [T_home, T_draw, T_away] list), a
+    per-class temperature is applied instead of the scalar — better ECE on the
+    asymmetric draw class. Falls back to the scalar temperature otherwise."""
+    vec = getattr(config, "ENSEMBLE_TEMPERATURE_VEC", None)
+    if vec:
+        from models import calibrate
+        return calibrate.apply_vector_temperature((p_home, p_draw, p_away), vec)
     t = config.ENSEMBLE_TEMPERATURE
     if t == 1.0:
         s = p_home + p_draw + p_away
