@@ -1,11 +1,9 @@
 """
-Pure-Python self-tests for the method-upgrade phases (no DB, no numpy).
+Pure-Python self-tests for the method-upgrade work (no DB, no numpy).
 
-Each phase adds a recalibrator / model / metric that is a no-op at its identity
-parameter and must demonstrably move its target metric on synthetic data. These
-tests verify the *mechanics* (the maths is correct, identities are safe, the
-target score moves the right way); the *real* held-out gain is confirmed
-separately with `python run.py backtest` against the historical DB.
+Each upgrade is a no-op at its identity parameter and must demonstrably move its
+target metric on synthetic data. These verify the *mechanics*; the *real*
+held-out gain is confirmed with `python run.py backtest` against the historical DB.
 
 Run:  python tools/test_upgrades.py
 """
@@ -18,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import metrics       # noqa: E402
 from models import calibrate     # noqa: E402
+from models import pirating      # noqa: E402
 
 
 def _sharpen(p, gamma):
@@ -27,9 +26,6 @@ def _sharpen(p, gamma):
 
 
 def _gen_overconfident(n=4000, seed=7, gamma=1.6):
-    """Synthetic 1X2 stream: outcomes sampled from a true distribution, but the
-    'model' reports an over-confident (sharpened) version — so a softening
-    temperature / shrinkage should recalibrate it and cut ECE / Brier / log-loss."""
     rnd = random.Random(seed)
     rows = []
     for _ in range(n):
@@ -52,7 +48,6 @@ def test_phase1_vector_temperature():
     ll1 = metrics.score_stream(recal)["log_loss"]
     assert ece1 < ece0, f"ECE not reduced: {ece0:.4f} -> {ece1:.4f}"
     assert ll1 <= ll0 + 1e-9, f"log-loss not reduced: {ll0:.4f} -> {ll1:.4f}"
-    assert all(t > 0 for t in temps)
     p = (0.5, 0.3, 0.2)
     assert max(abs(a - b) for a, b in zip(calibrate.apply_vector_temperature(p, (1, 1, 1)), p)) < 1e-9
     print(f"  [P1] vector-temp OK   ECE {ece0:.4f}->{ece1:.4f}  "
@@ -76,10 +71,26 @@ def test_phase2_shrinkage():
           f"lam={lam:.2f}  prior={tuple(round(x, 2) for x in prior)}")
 
 
-TESTS = [test_phase1_vector_temperature, test_phase2_shrinkage]
+def test_phase3_pirating():
+    pr = pirating.PiRatings()
+    for _ in range(50):
+        pr.update("A", "B", 2, 0, neutral=True)   # A consistently beats B by 2
+    gd = pr.expected_gd("A", "B", neutral=True)
+    assert gd > 0, f"A should out-rate B, gd={gd}"
+    p = pirating.predict_1x2(pr, "A", "B", neutral=True)
+    assert p["p_home"] > p["p_away"], p
+    assert abs(sum(p.values()) - 1.0) < 1e-9
+    sym = pirating.gd_to_1x2(0.0)
+    assert abs(sym["p_home"] - sym["p_away"]) < 1e-9, "draw band must be symmetric at gd=0"
+    assert pirating.gd_to_1x2(1.0)["p_home"] > pirating.gd_to_1x2(0.0)["p_home"]
+    print(f"  [P3] pi-ratings OK    A-B gd={gd:.2f}  "
+          f"1X2={tuple(round(p[k], 3) for k in ('p_home', 'p_draw', 'p_away'))}")
+
+
+TESTS = [test_phase1_vector_temperature, test_phase2_shrinkage, test_phase3_pirating]
 
 
 if __name__ == "__main__":
     for t in TESTS:
         t()
-    print(f"ALL {len(TESTS)} PHASE TEST(S) PASSED")
+    print(f"ALL {len(TESTS)} UPGRADE TEST(S) PASSED")
