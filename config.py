@@ -166,6 +166,11 @@ ENSEMBLE_TEMPERATURE = 1.0
 # calibration error (ECE) on the asymmetric 1X2 draw class. None = use scalar.
 # Fit via models.calibrate.fit_vector_temperature; keep only if backtest improves.
 ENSEMBLE_TEMPERATURE_VEC = None
+# Shrinkage toward the base-rate prior: p' = (1-λ)·p + λ·prior. Curbs slight
+# over-confidence, lowering Brier/RPS. λ=0 = off. Fit via calibrate.fit_shrinkage;
+# ENSEMBLE_PRIOR is the [home, draw, away] base rate (calibrate.base_rate).
+ENSEMBLE_SHRINKAGE = 0.0
+ENSEMBLE_PRIOR = None
 
 # Tournament-form overlay (models/form.py): once WC2026 games are played, nudge a
 # team's *effective* Elo by how it performed vs the model's own expectation in this
@@ -216,8 +221,7 @@ _TUNABLE = {
     "ELO_K_SCALE", "ELO_HOME_ADVANTAGE", "ELO_DRAW_MAX", "ELO_USE_GD",
     "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
-    "ENSEMBLE_TEMPERATURE_VEC",
-    "FORM_WEIGHT", "FORM_K", "FORM_CAP", "FORM_HALFLIFE_DAYS",
+    "ENSEMBLE_TEMPERATURE_VEC", "ENSEMBLE_SHRINKAGE", "ENSEMBLE_PRIOR",
     "FORM_XG_WEIGHT", "FORM_XG_SCALE",
 }
 _TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")

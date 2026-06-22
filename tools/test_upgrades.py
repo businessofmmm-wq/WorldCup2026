@@ -29,7 +29,7 @@ def _sharpen(p, gamma):
 def _gen_overconfident(n=4000, seed=7, gamma=1.6):
     """Synthetic 1X2 stream: outcomes sampled from a true distribution, but the
     'model' reports an over-confident (sharpened) version — so a softening
-    temperature should recalibrate it and cut ECE / log-loss."""
+    temperature / shrinkage should recalibrate it and cut ECE / Brier / log-loss."""
     rnd = random.Random(seed)
     rows = []
     for _ in range(n):
@@ -53,14 +53,30 @@ def test_phase1_vector_temperature():
     assert ece1 < ece0, f"ECE not reduced: {ece0:.4f} -> {ece1:.4f}"
     assert ll1 <= ll0 + 1e-9, f"log-loss not reduced: {ll0:.4f} -> {ll1:.4f}"
     assert all(t > 0 for t in temps)
-    # identity safety: applying T=(1,1,1) changes nothing
     p = (0.5, 0.3, 0.2)
     assert max(abs(a - b) for a, b in zip(calibrate.apply_vector_temperature(p, (1, 1, 1)), p)) < 1e-9
     print(f"  [P1] vector-temp OK   ECE {ece0:.4f}->{ece1:.4f}  "
           f"LL {ll0:.4f}->{ll1:.4f}  T={tuple(round(t, 2) for t in temps)}")
 
 
-TESTS = [test_phase1_vector_temperature]
+def test_phase2_shrinkage():
+    rows = _gen_overconfident(gamma=1.8)
+    brier0 = metrics.score_stream(rows)["brier"]
+    prior = calibrate.base_rate(rows)
+    lam = calibrate.fit_shrinkage(rows, prior)
+    recal = [(calibrate.apply_shrinkage(p, lam, prior), o) for p, o in rows]
+    brier1 = metrics.score_stream(recal)["brier"]
+    assert lam > 0.0, "expected non-zero shrinkage on over-confident data"
+    assert brier1 < brier0, f"Brier not reduced: {brier0:.4f} -> {brier1:.4f}"
+    p = (0.5, 0.3, 0.2)
+    assert max(abs(a - b) for a, b in zip(calibrate.apply_shrinkage(p, 0.0, prior), p)) < 1e-9
+    out = calibrate.apply_shrinkage(p, lam, prior)
+    assert abs(sum(out) - 1.0) < 1e-9 and all(x >= 0 for x in out)
+    print(f"  [P2] shrinkage OK     Brier {brier0:.4f}->{brier1:.4f}  "
+          f"lam={lam:.2f}  prior={tuple(round(x, 2) for x in prior)}")
+
+
+TESTS = [test_phase1_vector_temperature, test_phase2_shrinkage]
 
 
 if __name__ == "__main__":

@@ -78,6 +78,13 @@ class Predictor:
         p_draw = (we * e["p_draw"] + wd * gm["p_draw"]) / wsum
         p_away = (we * e["p_away"] + wd * gm["p_away"]) / wsum
         p_home, p_draw, p_away = _temper(p_home, p_draw, p_away)
+        # Optional shrinkage toward the base-rate prior (Brier/RPS). Off by default.
+        _lam = getattr(config, "ENSEMBLE_SHRINKAGE", 0.0)
+        _prior = getattr(config, "ENSEMBLE_PRIOR", None)
+        if _lam and _prior:
+            from models import calibrate
+            p_home, p_draw, p_away = calibrate.apply_shrinkage(
+                (p_home, p_draw, p_away), _lam, _prior)
 
         result = {
             "home": home, "away": away, "neutral": neutral,
