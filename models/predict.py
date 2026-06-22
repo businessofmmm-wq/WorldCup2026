@@ -66,6 +66,22 @@ class Predictor:
             except Exception:
                 pass
         self.goals = goals if goals is not None else load_goals_model()
+        # Squad-value prior: nudge effective Elo by club-derived talent (centred
+        # log market value). Off when weight=0 or no values ingested. Leakage-free
+        # basis: see config.ENSEMBLE_VALUE_WEIGHT.
+        if getattr(config, "ENSEMBLE_VALUE_WEIGHT", 0.0) > 0:
+            try:
+                import math as _math
+                from sources import squadvalue as _sv
+                _vals = _sv.load()
+                if _vals:
+                    _logs = {t: _math.log10(v) for t, v in _vals.items() if v > 0}
+                    _mean = sum(_logs.values()) / len(_logs)
+                    _g = config.ENSEMBLE_VALUE_WEIGHT
+                    for _t, _lv in _logs.items():
+                        self.elo[_t] = self.elo.get(_t, config.ELO_START) + _g * (_lv - _mean)
+            except Exception:
+                pass
         # Pi-ratings signal, loaded once from cache (data/pi_params.json) when
         # the ensemble weight is on. Off (None) keeps the live path Elo+DC only.
         self.pi = None

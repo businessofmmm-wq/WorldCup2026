@@ -79,6 +79,9 @@ def cmd_ingest(args):
         print("[news]"); src_news.ingest()
     if what in ("xg", "all"):
         print("[xg]"); src_xg.ingest(limit=(None if what == "xg" else 5))
+    if what in ("squadvalue", "all"):
+        from sources import squadvalue as src_sv
+        print("[squad-value]"); src_sv.ingest()
 
 
 def cmd_train(_args):
@@ -270,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     ingest = subparsers.add_parser("ingest", help="results | live | news | xg | all")
     ingest.add_argument("what", nargs="?", default="all",
-                        choices=["results", "live", "news", "xg", "all"])
+                        choices=["results", "live", "news", "xg", "squadvalue", "all"])
     ingest.set_defaults(func=cmd_ingest)
 
     subparsers.add_parser("train", help="recompute Elo + Dixon-Coles ratings").set_defaults(func=cmd_train)

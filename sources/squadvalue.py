@@ -84,9 +84,12 @@ def ingest(verbose: bool = True) -> dict:
 
 
 def load(as_of=None) -> dict:
-    with connect() as c:
-        return {t: v for t, v in
-                c.execute("SELECT team, value_m FROM team_market_value").fetchall()}
+    try:
+        with connect() as c:
+            return {t: v for t, v in
+                    c.execute("SELECT team, value_m FROM team_market_value").fetchall()}
+    except Exception:
+        return {}
 
 
 if __name__ == "__main__":

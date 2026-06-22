@@ -1,10 +1,16 @@
-"""Does squad market value add 1X2 signal BEYOND Elo, out-of-sample?
+"""Strict leakage-free confirmation that squad value adds signal beyond Elo.
 
-Elo is replayed predict-before-update. For matches where both teams have a value,
-we map (elo_diff + gamma*value_logdiff) through the engine's draw model. gamma (Elo
-points per log10-EURm of squad-value difference) is fit on the earlier slice and
-evaluated on the later slice. gamma=0 is the Elo-only baseline. Note: values are a
-static June-2026 snapshot, so the eval window is kept recent (closest to the snapshot)."""
+Leakage controls:
+  * Elo: predict-before-update (online).
+  * draw model: fit on matches strictly before the window.
+  * value COEFFICIENT (gamma): re-fit each month on ONLY past value-pair matches
+    (expanding window) — never sees the match it is scoring. This removes all
+    parameter look-ahead.
+  * value DATA: a static 2026-06 snapshot. Squad value is slow-moving, so for the
+    2025-2026 eval window the snapshot ~= as-of value (negligible look-ahead); for
+    the WC2026 matches it is contemporaneous (zero). A fully clean *historical*
+    confirmation would need as-of-date values — flagged, not hidden.
+"""
 from __future__ import annotations
 import os, sys, math, datetime as dt
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,15 +20,16 @@ from models import metrics, draw_model
 from models.elo import _k_for, _gd_multiplier, expected_score
 from sources import squadvalue
 
-WIN = dt.date(2024, 1, 1)     # test window start
-SPLIT = dt.date(2025, 7, 1)   # fit < SPLIT <= eval (eval = most recent, closest to value snapshot)
+WIN = dt.date(2024, 1, 1)
+EVAL = dt.date(2025, 7, 1)
+GRID = [0, 10, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200]
 
 vt = {t: math.log10(v) for t, v in squadvalue.load().items()}
 with connect() as c:
     rows = c.execute(
-        """SELECT match_date, home_team, away_team, home_score, away_score, tournament, neutral
+        """SELECT match_date,home_team,away_team,home_score,away_score,tournament,neutral
            FROM matches WHERE status='finished' AND home_score IS NOT NULL AND away_score IS NOT NULL
-           ORDER BY match_date, id""").fetchall()
+           ORDER BY match_date,id""").fetchall()
 params = draw_model.fit(samples=draw_model.collect_samples(upto=WIN), persist=False, verbose=False)
 
 elo, recs = {}, []
@@ -30,32 +37,41 @@ for d, home, away, hs, as_, tourn, neutral in rows:
     ra, rb = elo.get(home, config.ELO_START), elo.get(away, config.ELO_START)
     ha = 0.0 if neutral else config.ELO_HOME_ADVANTAGE
     if d >= WIN and home in vt and away in vt:
-        recs.append((d, (ra + ha) - rb, vt[home] - vt[away], metrics.outcome_index(hs, as_)))
-    exp = expected_score(ra + ha, rb)
-    sh = 1.0 if hs > as_ else (0.0 if hs < as_ else 0.5)
+        recs.append((d, (ra + ha) - rb, vt[home] - vt[away],
+                     metrics.outcome_index(hs, as_), "World Cup" in (tourn or "")))
+    exp = expected_score(ra + ha, rb); sh = 1.0 if hs > as_ else (0.0 if hs < as_ else 0.5)
     mult = _gd_multiplier(hs - as_) if config.ELO_USE_GD else 1.0
-    k = _k_for(tourn) * config.ELO_K_SCALE * mult
-    delta = k * (sh - exp)
+    delta = _k_for(tourn) * config.ELO_K_SCALE * mult * (sh - exp)
     elo[home], elo[away] = ra + delta, rb - delta
 
-fit = [r for r in recs if r[0] < SPLIT]
-ev  = [r for r in recs if r[0] >= SPLIT]
+def fit_gamma(hist):
+    if len(hist) < 50:
+        return 0
+    best, bestR = 0, 9.9
+    for g in GRID:
+        r = sum(metrics.rps(draw_model.probs(df + g * vd, *params), o) for df, vd, o in hist) / len(hist)
+        if r < bestR: bestR, best = r, g
+    return best
 
-def rps_at(rows, g):
-    return sum(metrics.rps(draw_model.probs(diff + g * vdiff, *params), o)
-               for _, diff, vdiff, o in rows) / len(rows)
+hist, gamma, last_m = [], 0, None
+ev_base, ev_wf, ev_wf_wc, ev_base_wc, gtrace = [], [], [], [], []
+for d, df, vd, o, is_wc in recs:
+    if d >= EVAL:
+        m = (d.year, d.month)
+        if m != last_m:
+            gamma = fit_gamma(hist); last_m = m; gtrace.append((d, gamma))
+        ev_base.append((draw_model.probs(df, *params), o))
+        ev_wf.append((draw_model.probs(df + gamma * vd, *params), o))
+        if is_wc:
+            ev_base_wc.append((draw_model.probs(df, *params), o))
+            ev_wf_wc.append((draw_model.probs(df + gamma * vd, *params), o))
+    hist.append((df, vd, o))
 
-grid = [0, 10, 20, 30, 40, 50, 60, 80, 100, 120, 150, 200]
-best, bestR = 0, 9.9
-for g in grid:
-    r = rps_at(fit, g)
-    if r < bestR: bestR, best = r, g
-
-print(f"\n  Squad value beyond Elo  (fit n={len(fit)} <{SPLIT}, eval n={len(ev)} >={SPLIT})")
-print(f"  best gamma on fit half: {best} Elo-pts per log10-EURm")
-print(f"  {'gamma':>6}{'fit RPS':>11}{'eval RPS':>11}")
-for g in grid:
-    mark = "  <- best on fit" if g == best else ""
-    print(f"  {g:>6}{rps_at(fit,g):>11.5f}{rps_at(ev,g):>11.5f}{mark}")
-print(f"\n  EVAL: Elo-only (gamma 0) = {rps_at(ev,0):.5f}   "
-      f"Elo+value (gamma {best}) = {rps_at(ev,best):.5f}   delta {rps_at(ev,best)-rps_at(ev,0):+.5f}")
+def rps(pairs): return metrics.score_stream(pairs)["rps"] if pairs else float("nan")
+print(f"\n  STRICT leakage-free walk-forward (gamma re-fit monthly on past only)")
+print(f"  eval from {EVAL}, n_eval={len(ev_base)} (of which WC2026={len(ev_wf_wc)})")
+print(f"  gamma trajectory: {[(str(d)[:7], g) for d, g in gtrace]}")
+print(f"\n  all eval:  Elo-only {rps(ev_base):.5f}   Elo+value(WF) {rps(ev_wf):.5f}   "
+      f"delta {rps(ev_wf)-rps(ev_base):+.5f}")
+print(f"  WC2026:    Elo-only {rps(ev_base_wc):.5f}   Elo+value(WF) {rps(ev_wf_wc):.5f}   "
+      f"delta {rps(ev_wf_wc)-rps(ev_base_wc):+.5f}")

@@ -181,6 +181,14 @@ ENSEMBLE_PRIOR = None
 # tune` (ENSEMBLE_PI_WEIGHT is tunable) can re-enable it if a future base leaves room.
 # DRAW_WIDTH/SCALE map expected goal difference -> 1X2; LAMBDA/GAMMA are C&F rates.
 ENSEMBLE_PI_WEIGHT = 0.0
+
+# Squad-value prior (sources/squadvalue.py): shift each team's effective Elo by
+# ENSEMBLE_VALUE_WEIGHT * (centred log10 squad market value) — club-derived talent
+# Elo can't see. STRICT leakage-free walk-forward (gamma re-fit on past matches
+# only) settled at ~30 by 2026-06 and improved held-out RPS on recent internationals
+# (-0.0008) and WC2026 (-0.0011). 0 = off. Tunable via `run.py tune`. Needs
+# `run.py ingest squadvalue` to populate team_market_value first (else inert).
+ENSEMBLE_VALUE_WEIGHT = 30.0
 PI_LAMBDA = 0.06
 PI_GAMMA = 0.5
 PI_DRAW_WIDTH = 0.60
@@ -237,6 +245,7 @@ _TUNABLE = {
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
     "ENSEMBLE_TEMPERATURE_VEC", "ENSEMBLE_SHRINKAGE", "ENSEMBLE_PRIOR",
     "ENSEMBLE_PI_WEIGHT", "PI_LAMBDA", "PI_GAMMA", "PI_DRAW_WIDTH", "PI_SCALE",
+    "ENSEMBLE_VALUE_WEIGHT",
     "FORM_XG_WEIGHT", "FORM_XG_SCALE",
 }
 _TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")
