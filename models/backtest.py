@@ -181,22 +181,44 @@ def build_streams(matches, test_start, *, ensemble_weight=None,
     elo_probs = elo_replay(matches, **(elo_kw or {}))
     dc_probs = dc_walkforward(matches, test_start, **(dc_kw or {}))
     rates = base_rates(matches, test_start)
+    # Pi-ratings online replay (predict-before-update => leakage-free), only when on.
+    wp = getattr(config, "ENSEMBLE_PI_WEIGHT", 0.0)
+    pi_probs = None
+    if wp:
+        from models import pirating
+        _pr = pirating.PiRatings()
+        pi_probs = {}
+        for _i, (_d, _h, _a, _hs, _as, _t, _neu) in enumerate(matches):
+            if _d >= test_start:
+                _g = _pr.expected_gd(_h, _a, bool(_neu))
+                _pp = pirating.gd_to_1x2(_g)
+                pi_probs[_i] = (_pp["p_home"], _pp["p_draw"], _pp["p_away"])
+            _pr.update(_h, _a, _hs, _as, neutral=bool(_neu))
 
-    elo_s, dc_s, ens_s, base_s, unif_s = [], [], [], [], []
+    elo_s, dc_s, ens_s, base_s, unif_s, enspi_s = [], [], [], [], [], []
     for i, (d, home, away, hs, as_, tourn, neutral) in enumerate(matches):
         if d < test_start or i not in dc_probs:
             continue
         o = metrics.outcome_index(hs, as_)
         ep = elo_probs[i]
         dp = dc_probs[i]
-        en = _temper(tuple(w * ep[k] + (1.0 - w) * dp[k] for k in range(3)), temperature)
+        base_pre = tuple(w * ep[k] + (1.0 - w) * dp[k] for k in range(3))
+        en = _temper(base_pre, temperature)
         elo_s.append((d, neutral, ep, o))
         dc_s.append((d, neutral, dp, o))
         ens_s.append((d, neutral, en, o))
         base_s.append((d, neutral, rates[bool(neutral)], o))
         unif_s.append((d, neutral, (1 / 3, 1 / 3, 1 / 3), o))
-    return {"elo": elo_s, "dc": dc_s, "ensemble": ens_s,
-            "base_rate": base_s, "uniform": unif_s}
+        if pi_probs is not None and i in pi_probs:
+            pp = pi_probs[i]
+            mp = tuple((1.0 - wp) * base_pre[k] + wp * pp[k] for k in range(3))
+            sm = sum(mp) or 1.0
+            enspi_s.append((d, neutral, _temper(tuple(x / sm for x in mp), temperature), o))
+    out = {"elo": elo_s, "dc": dc_s, "ensemble": ens_s,
+           "base_rate": base_s, "uniform": unif_s}
+    if enspi_s:
+        out["ensemble_pi"] = enspi_s
+    return out
 
 
 def _pairs(stream, lo=None, hi=None):
@@ -232,8 +254,11 @@ def report(test_start: dt.date | None = None, refit_days: int = 45) -> dict:
                             dc_kw={"refit_days": refit_days})
 
     order = ["uniform", "base_rate", "elo", "dc", "ensemble"]
+    if streams.get("ensemble_pi"):
+        order.append("ensemble_pi")
     label = {"uniform": "Uniform (1/3)", "base_rate": "Base rate",
-             "elo": "Elo", "dc": "Dixon-Coles", "ensemble": "Ensemble"}
+             "elo": "Elo", "dc": "Dixon-Coles", "ensemble": "Ensemble",
+             "ensemble_pi": "Ensemble + pi"}
     print(f"  {'Model':<16}{'N':>7}{'RPS':>9}{'LogLoss':>10}{'Brier':>9}{'Acc':>8}")
     print("  " + "-" * 58)
     results = {}

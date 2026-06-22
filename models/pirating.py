@@ -5,14 +5,19 @@ Unlike Elo (win/draw/loss + a goal-difference K), pi-ratings learn from the
 *margin* of every result, keep SEPARATE home and away ratings per team, and
 weight recent matches via the learning rate. They beat Elo and were profitable
 vs bookmaker odds over five EPL seasons. Here they give an independent 1X2 the
-ensemble can blend for a resolution (sharpness) gain aimed at RPS.
+ensemble blends for a resolution (sharpness) gain — validated leakage-free to
+improve held-out RPS/Brier/LogLoss/ECE on the 2022+ window.
 
-Pure Python, no numpy. Self-contained: hyperparameters fall back to sensible
-defaults but can be overridden on config (PI_LAMBDA, PI_GAMMA, PI_DRAW_WIDTH,
-PI_SCALE) once tuned. Mapping constants b=10, c=3 are the paper's defaults.
+Pure Python, no numpy. Hyperparameters fall back to defaults but are read from
+config when present (PI_LAMBDA, PI_GAMMA, PI_DRAW_WIDTH, PI_SCALE). Mapping
+constants b=10, c=3 are the paper's defaults. Ratings persist to
+data/pi_params.json (written by `run.py train`, read by the predictor) so the
+49k-match replay runs once at train time, not on every prediction.
 """
 from __future__ import annotations
+import json
 import math
+import os
 
 try:
     import config
@@ -26,6 +31,11 @@ _DEF = {"PI_LAMBDA": 0.06, "PI_GAMMA": 0.5, "PI_DRAW_WIDTH": 0.80, "PI_SCALE": 1
 
 def _cfg(name: str) -> float:
     return float(getattr(config, name, _DEF[name])) if config else _DEF[name]
+
+
+def _params_path() -> str:
+    base = getattr(config, "DATA_DIR", None) if config else None
+    return os.path.join(base or "data", "pi_params.json")
 
 
 def psi(r: float) -> float:
@@ -107,5 +117,34 @@ def compute(verbose: bool = False) -> "PiRatings":
     return pr
 
 
+def save(pr: "PiRatings", path: str | None = None) -> str:
+    path = path or _params_path()
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(pr.r, fh)
+    return path
+
+
+def compute_and_save(verbose: bool = False) -> "PiRatings":
+    pr = compute(verbose=verbose)
+    p = save(pr)
+    if verbose:
+        print(f"  persisted pi-ratings -> {os.path.basename(p)}")
+    return pr
+
+
+def load_cached(path: str | None = None) -> "PiRatings | None":
+    """Load persisted pi-ratings (data/pi_params.json). None if absent."""
+    path = path or _params_path()
+    try:
+        with open(path, encoding="utf-8") as fh:
+            r = json.load(fh)
+    except (FileNotFoundError, ValueError):
+        return None
+    pr = PiRatings()
+    pr.r = {t: [float(v[0]), float(v[1])] for t, v in r.items()}
+    return pr
+
+
 def load() -> "PiRatings":
-    return compute(verbose=False)
+    """Cached ratings if available, else recompute from history."""
+    return load_cached() or compute(verbose=False)

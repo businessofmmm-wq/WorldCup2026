@@ -92,6 +92,10 @@ def cmd_train(_args):
     # fit both BP variants (cheap 1-D fits) to keep them warm.
     print("[bivariate-poisson]"); bivpois.fit(base=dc)
     print("[bivariate-poisson-diagonal]"); bivpois.fit_diagonal(base=dc)
+    # Pi-ratings: online margin-based ratings, persisted for the ensemble blend.
+    print("[pi-ratings]")
+    from models import pirating
+    pirating.compute_and_save(verbose=True)
     print("training complete")
 
 

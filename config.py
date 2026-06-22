@@ -172,6 +172,20 @@ ENSEMBLE_TEMPERATURE_VEC = None
 ENSEMBLE_SHRINKAGE = 0.0
 ENSEMBLE_PRIOR = None
 
+# Pi-ratings (models/pirating.py) — a second, margin-based team-strength signal,
+# blended into the ensemble pre-temper. HELD-OUT VERDICT (run.py backtest 2022,
+# production-faithful leakage-free weight sweep, tools/measure_pi2.py): against the
+# CALIBRATED ensemble the optimal out-of-sample weight is ~0 — pi adds nothing once
+# Elo+DC+temperature are in (it only helped vs an UN-calibrated base). Kept wired
+# and tunable but OFF by default so it can never regress the live model; `run.py
+# tune` (ENSEMBLE_PI_WEIGHT is tunable) can re-enable it if a future base leaves room.
+# DRAW_WIDTH/SCALE map expected goal difference -> 1X2; LAMBDA/GAMMA are C&F rates.
+ENSEMBLE_PI_WEIGHT = 0.0
+PI_LAMBDA = 0.06
+PI_GAMMA = 0.5
+PI_DRAW_WIDTH = 0.60
+PI_SCALE = 1.00
+
 # Tournament-form overlay (models/form.py): once WC2026 games are played, nudge a
 # team's *effective* Elo by how it performed vs the model's own expectation in this
 # tournament so far — recency-weighted and bounded so one game can't swing it. Flows
@@ -222,6 +236,7 @@ _TUNABLE = {
     "DC_HALF_LIFE_DAYS", "DC_REG", "DC_RHO",
     "ENSEMBLE_ELO_WEIGHT", "ENSEMBLE_DC_WEIGHT", "ENSEMBLE_TEMPERATURE",
     "ENSEMBLE_TEMPERATURE_VEC", "ENSEMBLE_SHRINKAGE", "ENSEMBLE_PRIOR",
+    "ENSEMBLE_PI_WEIGHT", "PI_LAMBDA", "PI_GAMMA", "PI_DRAW_WIDTH", "PI_SCALE",
     "FORM_XG_WEIGHT", "FORM_XG_SCALE",
 }
 _TUNED_FILE = os.path.join(DATA_DIR, "tuned_params.json")

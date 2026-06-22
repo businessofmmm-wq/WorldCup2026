@@ -66,6 +66,15 @@ class Predictor:
             except Exception:
                 pass
         self.goals = goals if goals is not None else load_goals_model()
+        # Pi-ratings signal, loaded once from cache (data/pi_params.json) when
+        # the ensemble weight is on. Off (None) keeps the live path Elo+DC only.
+        self.pi = None
+        if getattr(config, "ENSEMBLE_PI_WEIGHT", 0.0) > 0:
+            try:
+                from models import pirating
+                self.pi = pirating.load_cached()
+            except Exception:
+                self.pi = None
 
     def predict(self, home: str, away: str, neutral: bool = True,
                 log: bool = False, match_date=None) -> dict:
@@ -77,6 +86,16 @@ class Predictor:
         p_home = (we * e["p_home"] + wd * gm["p_home"]) / wsum
         p_draw = (we * e["p_draw"] + wd * gm["p_draw"]) / wsum
         p_away = (we * e["p_away"] + wd * gm["p_away"]) / wsum
+        # Pi-ratings blend (resolution gain), pre-temper so calibration sees it.
+        _wp = getattr(config, "ENSEMBLE_PI_WEIGHT", 0.0)
+        if _wp and self.pi is not None:
+            from models import pirating
+            _pi = pirating.predict_1x2(self.pi, home, away, neutral)
+            p_home = (1.0 - _wp) * p_home + _wp * _pi["p_home"]
+            p_draw = (1.0 - _wp) * p_draw + _wp * _pi["p_draw"]
+            p_away = (1.0 - _wp) * p_away + _wp * _pi["p_away"]
+            _n = p_home + p_draw + p_away
+            p_home, p_draw, p_away = p_home / _n, p_draw / _n, p_away / _n
         p_home, p_draw, p_away = _temper(p_home, p_draw, p_away)
         # Optional shrinkage toward the base-rate prior (Brier/RPS). Off by default.
         _lam = getattr(config, "ENSEMBLE_SHRINKAGE", 0.0)
