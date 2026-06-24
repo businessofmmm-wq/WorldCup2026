@@ -630,6 +630,7 @@ function mcCard(m, done) {
         <div class="mc-score">${m.home_score}<span>–</span>${m.away_score}</div>
         ${stamp}
         <div class="mc-line">model: ${wdwLabel(m)}</div>
+        <button class="mc-share" type="button" data-share-match="${esc(m.home.team)}|${esc(m.away.team)}|${m.home_score}|${m.away_score}|${m.called ? '1' : '0'}">⤴ share</button>
       </div>`;
     return `<div class="mc-card done" ${mk}>
         <div class="mc-date">${fmtDate(m.date)}</div>
@@ -806,18 +807,127 @@ function wireSupport() {
 // =========================================================================
 async function doShare() {
   const url = location.origin + '/';
-  const shareData = {
-    title: 'WCPA — World Cup ’26 Prediction Album',
-    text: 'Every World Cup ’26 match called by a backtested model, in a retro sticker album.',
-    url,
-  };
+  const rec = STATE.fixtures?.record;
+  const top = (STATE.report?.title_odds || [])[0];
+  const copies = [
+    top
+      ? `${top.team} lead the 2026 World Cup at ${pct(top.p_win)} — every match called by a backtested model, laid out as a retro sticker album.`
+      : `Every 2026 World Cup match called by a model backtested on 49,000+ internationals — title odds, wallchart, retro sticker album.`,
+    rec?.played
+      ? `The 2026 World Cup prediction engine — ${pct(rec.pct, 0)} of matches called correctly (${rec.called}/${rec.played}). Live title odds + full wallchart.`
+      : `48 nations. 104 matches. 50,000 Monte-Carlo sims. Who lifts the 2026 World Cup?`,
+    `Every World Cup '26 match called by a model backtested on 49,000+ internationals, laid out like a retro sticker album.`,
+  ];
+  const text = copies[Math.floor(Date.now() / 86400000) % copies.length];
+  const shareData = { title: `WCPA — World Cup '26 Prediction Album`, text, url };
   try {
     if (navigator.share) { await navigator.share(shareData); return; }
-  } catch (e) { /* user cancelled — fall through to copy */ }
+  } catch (e) { /* user cancelled — fall through */ }
+  try { await navigator.clipboard.writeText(url); } catch (e) {}
+  showShareTray(url, text);
+}
+
+function showShareTray(url, text) {
+  const enc = encodeURIComponent;
+  const twitterUrl = 'https://twitter.com/intent/tweet?text=' + enc(text) + '&url=' + enc(url);
+  const waUrl = 'https://wa.me/?text=' + enc(text + ' ' + url);
+  let tray = document.getElementById('shareTray');
+  if (!tray) {
+    tray = document.createElement('div');
+    tray.id = 'shareTray'; tray.className = 'share-tray';
+    tray.setAttribute('role', 'status'); document.body.appendChild(tray);
+  }
+  const lbl = document.createElement('span'); lbl.className = 'st-label'; lbl.textContent = 'Link copied! Share on:';
+  const tw = document.createElement('a'); tw.className = 'st-btn tw'; tw.href = twitterUrl;
+  tw.target = '_blank'; tw.rel = 'noopener noreferrer'; tw.textContent = 'X / Twitter';
+  const wa = document.createElement('a'); wa.className = 'st-btn wa'; wa.href = waUrl;
+  wa.target = '_blank'; wa.rel = 'noopener noreferrer'; wa.textContent = 'WhatsApp';
+  const cls = document.createElement('button'); cls.className = 'st-close'; cls.type = 'button';
+  cls.textContent = '✕'; cls.addEventListener('click', () => { tray.hidden = true; });
+  tray.innerHTML = ''; tray.append(lbl, tw, wa, cls); tray.hidden = false;
+  toast('link copied — share the album ⚽');
+  clearTimeout(showShareTray._t);
+  showShareTray._t = setTimeout(() => { if (tray) tray.hidden = true; }, 8000);
+}
+
+async function shareTeam(team, winText) {
+  const url = location.origin + '/?share=' + encodeURIComponent(team);
+  const text = `${team} have a ${winText} chance of winning the 2026 World Cup — WCPA statistical model (49,000+ internationals backtested).`;
+  const shareData = { title: `${team} — WCPA World Cup '26`, text, url };
   try {
-    await navigator.clipboard.writeText(url);
-    toast('link copied — share the album ⚽');
-  } catch (e) { toast(url); }
+    if (navigator.share) { await navigator.share(shareData); return; }
+  } catch (e) {}
+  try { await navigator.clipboard.writeText(url); } catch (e) {}
+  showShareTray(url, text);
+}
+
+async function shareMatch(home, away, hs, as_, called) {
+  const result = `${home} ${hs}–${as_} ${away}`;
+  const verdict = called ? 'WCPA called it ✔' : 'WCPA missed this one ✖';
+  const text = `${result} — ${verdict}. All 104 World Cup '26 match predictions:`;
+  const url = location.origin + '/';
+  const shareData = { title: result, text, url };
+  try {
+    if (navigator.share) { await navigator.share(shareData); return; }
+  } catch (e) {}
+  try { await navigator.clipboard.writeText(text + ' ' + url); } catch (e) {}
+  showShareTray(url, text);
+}
+
+function initKofiFloat() {
+  if (!LINKS.tip) return;
+  let dismissed = false;
+  try { dismissed = !!localStorage.getItem('wcpa_kofi_dismissed'); } catch (e) {}
+  if (dismissed) return;
+  const el = document.createElement('a');
+  el.id = 'kofiFloat'; el.className = 'kofi-float'; el.href = LINKS.tip;
+  el.target = '_blank'; el.rel = 'noopener nofollow'; el.hidden = true;
+  const icon = document.createElement('span'); icon.className = 'kf-icon'; icon.textContent = '☕';
+  const lbl = document.createElement('span'); lbl.textContent = 'Buy me a coffee';
+  const cls = document.createElement('button'); cls.className = 'kf-close'; cls.type = 'button';
+  cls.textContent = '✕'; cls.title = 'Dismiss'; cls.setAttribute('aria-label', 'Dismiss');
+  cls.addEventListener('click', e => {
+    e.preventDefault(); e.stopPropagation();
+    el.hidden = true;
+    try { localStorage.setItem('wcpa_kofi_dismissed', '1'); } catch (_) {}
+  });
+  el.append(icon, lbl, cls); document.body.appendChild(el);
+  setTimeout(() => { el.hidden = false; }, 30000);
+}
+
+function initNudgeBar() {
+  let shown = false;
+  try { shown = !!sessionStorage.getItem('wcpa_nudge_shown'); } catch (e) {}
+  if (shown) return;
+  const bar = document.createElement('div');
+  bar.id = 'nudgeBar'; bar.className = 'nudge-bar'; bar.hidden = true;
+  const txt = document.createElement('span'); txt.className = 'nb-text';
+  txt.textContent = 'Enjoying the album? Help get it in front of more football fans.';
+  const cta = document.createElement('button'); cta.className = 'nb-cta'; cta.type = 'button';
+  cta.textContent = '↗ Share now';
+  cta.addEventListener('click', () => { bar.hidden = true; doShare(); });
+  const cls = document.createElement('button'); cls.className = 'nb-close'; cls.type = 'button';
+  cls.textContent = '✕'; cls.setAttribute('aria-label', 'Dismiss');
+  cls.addEventListener('click', () => {
+    bar.hidden = true;
+    try { sessionStorage.setItem('wcpa_nudge_shown', '1'); } catch (e) {}
+  });
+  bar.append(txt, cta, cls); document.body.appendChild(bar);
+  let fired = false;
+  window.addEventListener('scroll', () => {
+    if (fired) return;
+    const d = document.documentElement;
+    if (d.scrollTop / (d.scrollHeight - d.clientHeight) > 0.55) {
+      fired = true; bar.hidden = false;
+      try { sessionStorage.setItem('wcpa_nudge_shown', '1'); } catch (e) {}
+    }
+  }, { passive: true });
+}
+
+function initShareDeepLink() {
+  const team = new URLSearchParams(location.search).get('share');
+  if (!team) return;
+  setTimeout(() => showProfile(team, document.getElementById('main') || document.body, true), 800);
 }
 
 // =========================================================================
@@ -1226,7 +1336,8 @@ function profileBody(team) {
     <div class="pf-row pf-odds"><span class="pf-k">TITLE&nbsp;RUN</span>
       <span class="road" title="QF · SF · Final · Win">${pip(odds.p_quarter)}${pip(odds.p_semi)}${pip(odds.p_final, 'f')}${pip(odds.p_win, 'w')}</span></div>
     ${nextHTML}
-    ${intelHTML}`;
+    ${intelHTML}
+    <div class="pf-share"><button class="pf-share-btn" type="button" data-share-team="${esc(team)}" data-share-win="${esc(pct(odds.p_win))}">⤴ Share ${esc(team)}'s odds</button></div>`;
 }
 
 function showProfile(team, anchor, pinned) {
@@ -1357,6 +1468,7 @@ async function boot() {
     const meta = await API('/api/meta.json');
     if (meta.error) toast('engine: ' + meta.error);
     renderMeta(meta); renderMethod(meta);
+    initShareDeepLink();
   } catch (e) { toast('could not reach the engine — is the server running?'); }
 
   // static, always-available chrome
@@ -1368,6 +1480,16 @@ async function boot() {
     if (location.hash !== '#tactics') history.replaceState(null, '', '#tactics');
   });
   $('#shareBtn')?.addEventListener('click', doShare);
+
+  // delegated listeners for share buttons built via innerHTML (profile card, match cards)
+  document.addEventListener('click', e => {
+    const sTeam = e.target.closest('[data-share-team]');
+    if (sTeam) { e.preventDefault(); e.stopPropagation(); shareTeam(sTeam.dataset.shareTeam, sTeam.dataset.shareWin); return; }
+    const sMatch = e.target.closest('[data-share-match]');
+    if (sMatch) { e.stopPropagation(); const [h, a, hs, as_, c] = sMatch.dataset.shareMatch.split('|'); shareMatch(h, a, hs, as_, c === '1'); }
+  });
+  initKofiFloat();
+  initNudgeBar();
 
   const safe = (fn, p, target) => API(p).then(fn).catch(() => {
     if (target) $(target).innerHTML = '<p class="loading">unavailable — is PostgreSQL up?</p>';

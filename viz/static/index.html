@@ -28,9 +28,94 @@
   <!-- Fonts are self-hosted same-origin (see @font-face in style.css). Preload the
        two above-the-fold faces — Anton (cover/headline = the LCP text) and Space
        Grotesk (body) — so they download in parallel with the CSS, no third-party hop. -->
+  <!-- Flags load from flagcdn.com — preconnect cuts the TLS handshake off the first flag render -->
+  <link rel="preconnect" href="https://flagcdn.com" crossorigin />
   <link rel="preload" href="/fonts/anton-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="preload" href="/fonts/spacegrotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="/style.css" />
+  <!-- JSON-LD: WebSite + SportsEvent schema for Google rich results -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebSite",
+        "@id": "https://wcpa26.com/#website",
+        "url": "https://wcpa26.com/",
+        "name": "WCPA — World Cup '26 Prediction Album",
+        "description": "A statistical prediction album for the 2026 FIFA World Cup. A model backtested on 49,000+ internationals calls every match, title odds and the full wallchart.",
+        "author": {
+          "@type": "Person",
+          "name": "Samuel Bowey"
+        },
+        "inLanguage": "en"
+      },
+      {
+        "@type": "SportsEvent",
+        "@id": "https://wcpa26.com/#tournament",
+        "name": "FIFA World Cup 2026",
+        "startDate": "2026-06-11",
+        "endDate": "2026-07-19",
+        "location": {
+          "@type": "Place",
+          "name": "USA, Canada & Mexico"
+        },
+        "sport": "Soccer",
+        "description": "The 2026 FIFA World Cup, featuring 48 teams and 104 matches across the USA, Canada and Mexico.",
+        "url": "https://wcpa26.com/"
+      }
+    ]
+  }
+  </script>
+  <!-- FAQ schema — targets featured snippets for World Cup '26 prediction queries -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {
+        "@type": "Question",
+        "name": "Who will win the 2026 FIFA World Cup?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "According to WCPA's statistical model — backtested on 49,000+ internationals using Elo, Dixon-Coles and bivariate-Poisson methods — the live title-odds table at wcpa26.com shows each nation's probability of lifting the trophy, updated after every match."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "When is the 2026 World Cup final?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The 2026 FIFA World Cup Final is scheduled for 19 July 2026. The tournament runs from 11 June to 19 July 2026 across 16 venues in the USA, Canada and Mexico, featuring 48 teams and 104 matches."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How accurate is a World Cup prediction model?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "WCPA uses a leakage-free walk-forward backtest on approximately 8,000 held-out international results, reporting Ranked Probability Score (RPS), log-loss and Brier score. The live accuracy record and methodology are shown openly on the site's Method page at wcpa26.com."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "Which team is favourite to win the 2026 World Cup?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "WCPA runs 50,000 Monte-Carlo tournaments over the official bracket after every match result. The current favourite and the full title-odds ranking for all 48 nations are shown live at wcpa26.com."
+        }
+      },
+      {
+        "@type": "Question",
+        "name": "How does the 2026 World Cup bracket work?",
+        "acceptedAnswer": {
+          "@type": "Answer",
+          "text": "The 2026 FIFA World Cup features 48 teams split into 12 groups of four. The top two from each group plus the eight best third-placed sides (24 teams total) advance to a Round of 32 knockout bracket, through a Round of 16, quarter-finals, semi-finals and the final on 19 July 2026."
+        }
+      }
+    ]
+  }
+  </script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>

@@ -1070,12 +1070,80 @@ path.lit { filter: drop-shadow(0 0 3px var(--accent)); }
   min-width: 16px;
 }
 .ar-nm {
-  font-family: var(--font-lab); font-
+  font-family: var(--font-lab); letter-spacing: .4px; font-size: .88rem;
+  color: var(--ink); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ar-win {
+  font-family: var(--font-badge); font-size: .76rem; color: var(--terra);
+  min-width: 38px; text-align: right;
+}
 
-
-/* Intel page: filter row (the rest of the per-page upgrade pack was never
-   wired up, so it has been culled — only this row remains live). */
+/* Intel page: filter row */
 .intel-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+
+/* =====================================================================
+   LIVE-STATE + ANIMATION UTILITIES
+   Classes referenced by app.js that were missing from the stylesheet.
+   ===================================================================== */
+
+/* ---- pulsing live-match dot ---- */
+.livedot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--red); animation: blink 1.3s infinite;
+  vertical-align: middle; flex: none;
+}
+
+/* ---- tweened-number flash + enter ---- */
+@keyframes lv-flash {
+  0%,100% { background: transparent; }
+  25% { background: color-mix(in srgb, var(--gold) 30%, transparent); border-radius: 4px; }
+}
+@keyframes lv-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.lv-flash { animation: lv-flash .55s ease-out; }
+.lv-enter { animation: lv-enter .28s ease-out; }
+
+/* ---- match-centre kick-state badges ---- */
+.mc-kick.mc-live {
+  color: var(--red); display: flex; align-items: center; gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.mc-kick.mc-await { color: var(--ink-soft); font-size: .82rem; }
+.mc-kick.mc-soon  { color: var(--terra); display: flex; align-items: center; gap: 5px; }
+
+/* ---- live / soon tint on the mc-card itself ---- */
+.mc-card.is-live {
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 22%, transparent), var(--shadow-sm);
+}
+.mc-card.is-soon { border-color: var(--terra); }
+
+/* ---- mural pulse: live cell highlight ---- */
+.pulse-cell.pulse-live { background: color-mix(in srgb, var(--red) 9%, var(--card)); }
+.pulse-more {
+  font-family: var(--font-badge); font-size: .7rem; color: var(--ink-soft);
+  background: var(--surface-2); border: 1.5px solid var(--card-edge);
+  border-radius: 8px; padding: 0 5px;
+}
+
+/* ---- standalone result tints used in pulse cells ---- */
+.ok   { color: var(--teal); }
+.miss { color: var(--red);  }
+
+/* ---- mural intel strip (marginalia) ---- */
+.marginalia {
+  border-top: 1.5px dashed var(--cream-line); padding-top: 12px; margin-top: 8px;
+  display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline;
+  font-size: .78rem; color: var(--ink-soft); line-height: 1.55;
+}
+.marg-k {
+  font-family: var(--font-badge); font-size: .65rem; letter-spacing: 2px;
+  color: var(--gold-deep); flex: none; margin-right: 4px;
+}
+.marg-item { font-size: .78rem; color: var(--ink-soft); }
+.marg-dot  { color: var(--ink-soft); opacity: .45; padding: 0 2px; }
 
 
 /* =====================================================================
@@ -1311,3 +1379,72 @@ img, svg, table { max-width: 100%; }
 @media (max-width: 380px) {
   .mural-groups { grid-template-columns: 1fr; }
 }
+
+/* ── VIRALITY + SOCIAL SHARE UI ───────────────────────────────────────────── */
+/* Share tray — slides up after clipboard copy, auto-hides after 8 s */
+.share-tray {
+  position: fixed; bottom: 72px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+  background: var(--card); border: 2px solid var(--card-edge); border-radius: 14px;
+  padding: 9px 14px; box-shadow: 0 8px 28px rgba(0,0,0,.55);
+  z-index: 9100; animation: lv-enter .22s ease-out; white-space: nowrap;
+  font-family: var(--font-badge); font-size: .76rem;
+}
+.share-tray[hidden] { display: none !important; }
+.st-label { color: var(--ink-soft); }
+.st-btn {
+  border-radius: 8px; padding: 4px 12px; font-family: var(--font-badge);
+  font-size: .74rem; font-weight: 700; letter-spacing: .5px; text-decoration: none;
+  transition: opacity .15s;
+}
+.st-btn:hover { opacity: .82; }
+.st-btn.tw { background: #000; color: #fff; border: 1.5px solid #444; }
+.st-btn.wa { background: #25D366; color: #fff; border: none; }
+.st-close { background: none; border: none; color: var(--ink-soft); cursor: pointer; font-size: .88rem; padding: 2px 4px; margin-left: 2px; }
+
+/* Ko-fi floating album stamp — appears after 30 s dwell, dismissible, remembered */
+.kofi-float {
+  position: fixed; bottom: 22px; right: 20px; z-index: 8800;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--gold); color: #20150c; font-family: var(--font-badge);
+  font-size: .76rem; font-weight: 700; letter-spacing: .6px;
+  border: 2.5px solid #20150c; border-radius: 50px;
+  padding: 7px 14px 7px 10px; box-shadow: 3px 3px 0 #20150c;
+  text-decoration: none; animation: lv-enter .3s ease-out; transition: transform .15s;
+}
+.kofi-float:hover { transform: translateY(-2px); }
+.kofi-float[hidden] { display: none !important; }
+.kf-icon { font-size: 1rem; }
+.kf-close { background: none; border: none; color: #20150c; cursor: pointer; font-size: .82rem; padding: 0; line-height: 1; margin-left: 4px; opacity: .65; }
+.kf-close:hover { opacity: 1; }
+
+/* Scroll-triggered share nudge bar — once per session at 55 % depth */
+.nudge-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 8700;
+  background: var(--card); border-top: 2px solid var(--card-edge);
+  padding: 9px 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: .8rem; color: var(--ink-soft); animation: lv-enter .25s ease-out;
+}
+.nudge-bar[hidden] { display: none !important; }
+.nb-text { flex: 1; min-width: 140px; }
+.nb-cta { font-family: var(--font-badge); font-size: .78rem; font-weight: 700; letter-spacing: .5px; color: var(--gold); background: none; border: none; cursor: pointer; padding: 0; }
+.nb-close { background: none; border: none; color: var(--ink-soft); cursor: pointer; font-size: .88rem; margin-left: auto; padding: 2px 6px; }
+
+/* Match micro-share button on completed result cards */
+.mc-share {
+  background: none; border: 1.5px solid var(--card-edge); border-radius: 6px;
+  color: var(--ink-soft); cursor: pointer; font-size: .64rem; padding: 2px 7px;
+  font-family: var(--font-badge); letter-spacing: .4px; line-height: 1.4;
+  transition: color .15s, border-color .15s; display: block; margin: 4px auto 0;
+}
+.mc-share:hover { color: var(--gold); border-color: var(--gold); }
+
+/* Team profile card — share row at the bottom */
+.pf-share { border-top: 1.5px dashed var(--card-edge); margin-top: 10px; padding-top: 8px; display: flex; justify-content: flex-end; }
+.pf-share-btn {
+  background: none; border: 1.5px solid var(--card-edge); border-radius: 8px;
+  color: var(--ink-soft); cursor: pointer; font-family: var(--font-badge);
+  font-size: .71rem; letter-spacing: .5px; padding: 4px 12px;
+  transition: color .15s, border-color .15s;
+}
+.pf-share-btn:hover { color: var(--gold); border-color: var(--gold); }
