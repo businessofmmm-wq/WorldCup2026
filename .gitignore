@@ -19,6 +19,7 @@ data/bivpois_params.json
 
 # build + deploy artifacts
 dist/
+out/
 viz/_shots/
 viz/assets/fonts/
 *.log

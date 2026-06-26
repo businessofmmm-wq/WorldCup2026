@@ -4,7 +4,7 @@ World Cup 2026 prediction engine — command line.
 
     python run.py health                 DB + data snapshot
     python run.py init                   create/upgrade the schema
-    python run.py ingest [what]          results | live | news | xg | all
+    python run.py ingest [what]          results | live | news | xg | squadvalue | avail | all
     python run.py train                  recompute Elo + Dixon-Coles ratings
     python run.py predict HOME AWAY      single-fixture prediction (neutral)
     python run.py backtest [year]        leakage-free accuracy backtest (RPS/etc)
@@ -25,6 +25,9 @@ World Cup 2026 prediction engine — command line.
     python run.py audit [--no-load]      security + stability + load + hygiene gate
     python run.py simvar [-n N -r R]     variance-reduction benchmark (QMC/antithetic/CV)
     python run.py cv <clip> --home H --away A --date D   Quantum Tactics CV pass (local, CC clip)
+    python run.py shorts result [--match "A|B"]         YouTube Short — match result card
+    python run.py shorts daily                          YouTube Short — today's predictions
+    python run.py shorts odds                           YouTube Short — title odds leaderboard
 
 `refresh` is the inflow loop: pull the newest results/news, fold them into the
 ratings, and re-run the simulation so predictions always reflect latest data.
@@ -79,9 +82,27 @@ def cmd_ingest(args):
         print("[news]"); src_news.ingest()
     if what in ("xg", "all"):
         print("[xg]"); src_xg.ingest(limit=(None if what == "xg" else 5))
+        if what == "xg":
+            # Secondary xG backfillers — chained only on an explicit `ingest xg`
+            # (kept out of `all`/the hourly deploy so they never slow it). Both are
+            # best-effort and never fatal; they activate the moment their feed
+            # serves WC2026 data. Today the free tiers return little: BALLDONTLIE's
+            # FIFA key matches no current games, FotMob blocks non-residential IPs.
+            from sources import balldontlie as src_bdl
+            from sources import fotmob as src_fotmob
+            print("[xg:balldontlie]"); src_bdl.ingest()
+            print("[xg:fotmob]");      src_fotmob.ingest()
     if what in ("squadvalue", "all"):
         from sources import squadvalue as src_sv
         print("[squad-value]"); src_sv.ingest()
+    if what == "avail":
+        # Player availability / injuries / line-ups (API-Football). Explicit-only:
+        # the free plan covers seasons 2022-2024, so it no-ops on the 2026 season
+        # until the plan is upgraded (set APIFOOTBALL_SEASON to test on a covered
+        # year). Best-effort; never fatal. Not yet folded into the model (the form
+        # overlay wiring is a separate, backtest-gated step).
+        from sources import apifootball as src_af
+        print("[availability]"); src_af.ingest()
 
 
 def cmd_train(_args):
@@ -259,6 +280,14 @@ def cmd_cv(args):
     ]))
 
 
+def cmd_shorts(args):
+    from tools import shorts_gen
+    extra = []
+    if hasattr(args, "match") and args.match:
+        extra = ["--match", args.match]
+    shorts_gen.main([args.shorts_mode] + extra)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="World Cup 2026 prediction engine — command line.",
@@ -271,9 +300,9 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("health", help="DB + data snapshot").set_defaults(func=cmd_health)
     subparsers.add_parser("init", help="create/upgrade the schema").set_defaults(func=cmd_init)
 
-    ingest = subparsers.add_parser("ingest", help="results | live | news | xg | all")
+    ingest = subparsers.add_parser("ingest", help="results | live | news | xg | squadvalue | avail | all")
     ingest.add_argument("what", nargs="?", default="all",
-                        choices=["results", "live", "news", "xg", "squadvalue", "all"])
+                        choices=["results", "live", "news", "xg", "squadvalue", "avail", "all"])
     ingest.set_defaults(func=cmd_ingest)
 
     subparsers.add_parser("train", help="recompute Elo + Dixon-Coles ratings").set_defaults(func=cmd_train)
@@ -346,6 +375,14 @@ def build_parser() -> argparse.ArgumentParser:
     cv.add_argument("--away", required=True)
     cv.add_argument("--date", required=True)
     cv.set_defaults(func=cmd_cv)
+
+    shorts = subparsers.add_parser("shorts", help="generate a YouTube Shorts MP4 from model data")
+    shorts_sub = shorts.add_subparsers(dest="shorts_mode", metavar="MODE", required=True)
+    shorts_sub.add_parser("result", help="latest completed match result Short").add_argument(
+        "--match", default=None, help='filter: "Spain|Morocco"')
+    shorts_sub.add_parser("daily", help="today\'s upcoming predictions Short")
+    shorts_sub.add_parser("odds",  help="title-odds leaderboard Short")
+    shorts.set_defaults(func=cmd_shorts)
 
     return parser
 
