@@ -159,6 +159,13 @@ def _cdn_config(dist: str) -> None:
     # Cloudflare Pages / Netlify rewrites: keep the client's /api/<x> URLs working
     # by serving the frozen <x>.json. Query strings are ignored by the match, which
     # is fine — the snapshots already bake in the right n=.
+    # NOTE on canonical host (www → apex): Pages `_redirects` does NOT support
+    # hostname/domain-level source matching (only paths within the site), so the
+    # www→apex 301 CANNOT live here — it must be a zone-level Single Redirect /
+    # Bulk Redirect (Cloudflare dash → Rules → Redirect Rules: when
+    # http.host == "www.wcpa26.com" → 301 concat("https://wcpa26.com",
+    # http.request.uri.path)). Without it, www and apex are separate origins with
+    # separate caches + localStorage. See the deploy notes / NEXTSTEPS.md.
     redirects = "\n".join(
         f"/api/{name}  /api/{name}.json  200"
         for name in ("meta", "report", "groupadv", "rankings",
@@ -180,8 +187,38 @@ def _cdn_config(dist: str) -> None:
   Cross-Origin-Opener-Policy: same-origin
   Content-Security-Policy: default-src 'self'; img-src 'self' https://flagcdn.com data:; style-src 'self' 'unsafe-inline'; font-src 'self'; script-src 'self' https://challenges.cloudflare.com https://cdnjs.cloudflare.com; connect-src 'self'; frame-src https://challenges.cloudflare.com; base-uri 'none'; frame-ancestors 'none'; object-src 'none'
 
+# HTML is never hard-cached: every visit revalidates, so a redeploy — and the
+# new ?v=<hash> asset stamps the fresh HTML points to — is picked up on the very
+# next load with no hard-refresh. Stated explicitly rather than relying on a CDN
+# default, so two profiles/devices can't drift onto different renders.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+/about
+  Cache-Control: public, max-age=0, must-revalidate
+/about.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Content-hashed bundles. The HTML references these as /app.js?v=<hash>; the URL
+# changes whenever the bytes change, so the file itself is safe to cache forever
+# (a changed file is a new URL = guaranteed fresh; an unchanged one never
+# re-validates = fast repeat loads).
+/style.css
+  Cache-Control: public, max-age=31536000, immutable
+/app.js
+  Cache-Control: public, max-age=31536000, immutable
+/collapse.js
+  Cache-Control: public, max-age=31536000, immutable
+/collapse-core.js
+  Cache-Control: public, max-age=31536000, immutable
+
+# Data snapshots are rewritten on every deploy. Short max-age + must-revalidate
+# (NO stale-while-revalidate) means all visitors converge on the latest numbers
+# within ~2 min, instead of one being served a stale copy in the background while
+# another already has fresh — the most visible "different version" symptom.
 /api/*
-  Cache-Control: public, max-age=300, stale-while-revalidate=600
+  Cache-Control: public, max-age=120, must-revalidate
 /assets/*
   Cache-Control: public, max-age=86400
 /fonts/*
