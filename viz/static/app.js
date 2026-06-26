@@ -275,48 +275,90 @@ function renderOdds(rep) {
 }
 
 // =========================================================================
-//  WALLCHART (bracket)
+//  WALLCHART (bracket)  —  reality-led: who's actually through, with the
+//  model's projected path riding underneath as side-info.
 // =========================================================================
-function slot(card, isWin, seed) {
-  return `<div class="slot ${isWin ? 'win' : 'out'}">
+// One slot. `state` is the reality verdict for this side of the tie:
+//   win  — real advancer (tie played)        out  — real eliminated (tie played)
+//   pick — the model's projected advancer     tbd  — undecided, not the model's pick
+// A confirmed qualifier wears a ✓; a side currently holding an advancing spot
+// while its group is still playing gets a pulsing live dot.
+function slot(card, state, seed, score) {
+  const mark = card.confirmed
+    ? '<span class="qmark" title="Through to the knockouts">✓</span>'
+    : card.provisional
+      ? '<span class="livedot" title="Currently in an advancing spot"></span>'
+      : '';
+  const sc = score != null && score !== '' ? `<span class="slot-score">${esc(score)}</span>` : '';
+  return `<div class="slot s-${state} profile-link" data-team="${esc(card.team)}" role="button" tabindex="0" aria-label="Open ${esc(card.team)} profile">
       ${seed ? `<span class="seed">${esc(seed)}</span>` : ''}
       ${flagHTML(card.flag, 'flag-xs', card.team)}
       <span class="nm">${esc(card.team)}</span>
+      ${mark}${sc}
     </div>`;
 }
 function tieHTML(t, seeds) {
-  return `<div class="tie">
-    ${slot(t.a, t.winner === t.a.team, seeds ? t.slot1 : '')}
-    ${slot(t.b, t.winner === t.b.team, seeds ? t.slot2 : '')}
+  const decided = !!t.played;
+  const [sa, sb] = decided && t.score ? t.score.split('-') : [null, null];
+  const stateOf = card => decided
+    ? (card.team === t.winner ? 'win' : 'out')
+    : (card.team === t.pick ? 'pick' : 'tbd');
+  return `<div class="tie${decided ? ' decided' : ''}">
+    ${slot(t.a, stateOf(t.a), seeds ? t.slot1 : '', sa)}
+    ${slot(t.b, stateOf(t.b), seeds ? t.slot2 : '', sb)}
   </div>`;
+}
+// Live status strip above the wallchart — the real state up front, the model's
+// projected champion demoted to a muted side-note.
+function renderBracketLive(b) {
+  const host = $('#bracketLive'); if (!host) return;
+  const L = b.live || {}, ch = b.champion || {};
+  const through = L.thirds_locked
+    ? `<b>${L.qualified_n}</b> through to the Round of 32`
+    : `<b>${L.qualified_n}</b> confirmed through`;
+  host.innerHTML = `
+    <div class="bl-main">
+      <span class="bl-stage"><span class="livedot"></span>${esc(L.stage || 'Bracket forming…')}</span>
+      <span class="bl-through">${through}</span>
+    </div>
+    <div class="bl-aside" title="The model's projection — side-info, not a result">
+      <span class="bl-aside-k">MODEL PROJECTS</span>
+      ${flagHTML(ch.flag, 'flag-xs', ch.team)}
+      <span class="bl-aside-team profile-link" data-team="${esc(ch.team || '')}">${esc(ch.team || '')}</span>
+      <span class="bl-aside-pct">${pct(ch.p_win)}</span>
+    </div>`;
 }
 function renderBracket(b) {
   if (b.error) { $('#bracket').innerHTML = `<p class="loading">${esc(b.error)}</p>`; return; }
-  const col = (title, html) => `<div class="col"><div class="col-title">${title}</div>${html}</div>`;
+  renderBracketLive(b);
+  const col = (title, html, cls = '') => `<div class="col ${cls}"><div class="col-title">${title}</div>${html}</div>`;
+  // Rounds beyond the R32 are entirely the model's projection until those ties
+  // actually populate — flag the column titles and mute them so reality leads.
+  const proj = s => `${s} <span class="col-proj">model</span>`;
   const r32a = b.r32.slice(0, 8), r32b = b.r32.slice(8);
   const R = b.rounds;
   const half = (arr, a, z) => arr.slice(a, z).map(t => tieHTML(t)).join('');
 
   $('#bracket').innerHTML =
-    col('R32 ·  ½', r32a.map(t => tieHTML(t, true)).join('')) +
-    col('R16', half(R.r16, 0, 4)) +
-    col('QF', half(R.qf, 0, 2)) +
-    col('SEMI', half(R.sf, 0, 1)) +
-    `<div class="col champ-col">
-        <div class="champ">
-          <div class="lbl">CHAMPION ’26</div>
+    col('R32 ·  ½', r32a.map(t => tieHTML(t, true)).join(''), 'col-real') +
+    col(proj('R16'), half(R.r16, 0, 4), 'col-proj-wrap') +
+    col(proj('QF'), half(R.qf, 0, 2), 'col-proj-wrap') +
+    col(proj('SEMI'), half(R.sf, 0, 1), 'col-proj-wrap') +
+    `<div class="col champ-col col-proj-wrap">
+        <div class="champ proj">
+          <div class="lbl">MODEL’S PICK</div>
           <div class="trophy">🏆</div>
           ${flagHTML(b.champion.flag, 'flag', b.champion.team)}
           <div class="nm">${esc(b.champion.team)}</div>
-          <div class="muted" style="font-size:.78rem">${pct(b.champion.p_win)} title odds</div>
+          <div class="muted" style="font-size:.78rem">${pct(b.champion.p_win)} to lift it</div>
         </div>
-        <div class="col-title" style="margin-top:14px">FINAL</div>
+        <div class="col-title" style="margin-top:14px">${proj('FINAL')}</div>
         ${R.final.map(t => tieHTML(t)).join('')}
       </div>` +
-    col('SEMI', half(R.sf, 1, 2)) +
-    col('QF', half(R.qf, 2, 4)) +
-    col('R16', half(R.r16, 4, 8)) +
-    col('R32 ·  ½', r32b.map(t => tieHTML(t, true)).join(''));
+    col(proj('SEMI'), half(R.sf, 1, 2), 'col-proj-wrap') +
+    col(proj('QF'), half(R.qf, 2, 4), 'col-proj-wrap') +
+    col(proj('R16'), half(R.r16, 4, 8), 'col-proj-wrap') +
+    col('R32 ·  ½', r32b.map(t => tieHTML(t, true)).join(''), 'col-real');
 
   $('#bracketNote').textContent = b.note || '';
 }

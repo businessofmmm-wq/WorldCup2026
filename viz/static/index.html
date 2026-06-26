@@ -188,11 +188,17 @@
     <section id="path" class="page">
       <div class="page-head">
         <span class="page-no">01</span>
-        <h2>Bracket &amp; Matches</h2>
-        <p class="page-tag">The official Round-of-32 wallchart with the model's <span class="gold-ink">gold chalk path</span> — then every fixture called: win/draw/win, expected goals and the likeliest score, with results showing whether the model called it. <b id="mcRecord"></b></p>
+        <h2>The Road to the Final</h2>
+        <p class="page-tag">Who's actually through, live — the Round-of-32 wallchart filling in real time as the groups settle. <span class="gold-ink">The model's projected path</span> rides underneath as side-info. Below: every fixture called, with results showing whether the model got it right. <b id="mcRecord"></b></p>
       </div>
+      <div class="bracket-live" id="bracketLive"></div>
       <div class="bracket-scroll">
         <div class="bracket" id="bracket"></div>
+      </div>
+      <div class="bracket-legend" aria-hidden="true">
+        <span class="bl-key"><span class="lk-q">✓</span> through to the knockouts</span>
+        <span class="bl-key"><span class="livedot"></span> currently in an advancing spot</span>
+        <span class="bl-key"><span class="lk-pick"></span> the model's projected path</span>
       </div>
       <p class="page-foot" id="bracketNote"></p>
       <div class="mc-tabs" role="tablist" aria-label="Match Centre view">

@@ -296,9 +296,63 @@ def ep_news(q) -> dict:
     return {"news": out, "team": team}
 
 
+def _real_group_tables() -> dict:
+    """Live group standings computed from *played* group-stage results.
+
+    Returns {group_letter: {"status": "complete"|"live"|"pending",
+                            "table": [ {team, p, w, d, l, gf, ga, gd, pts, pos} ]}}
+    sorted by the standard first-tier tiebreakers (points, goal difference, goals
+    for; head-to-head is intentionally omitted — a pragmatic ordering, good enough
+    to surface who is actually going through). Only intra-group matches with a real
+    score count, and each pairing is counted once (the live feed occasionally
+    carries a reversed-fixture duplicate)."""
+    grp_of = {t: g for g, teams in field_2026.OFFICIAL_GROUPS.items() for t in teams}
+    stats = {t: dict(p=0, w=0, d=0, l=0, gf=0, ga=0, pts=0) for t in grp_of}
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT home_team, away_team, home_score, away_score FROM matches "
+            "WHERE tournament='FIFA World Cup' AND match_date >= %s "
+            "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            (WC_START,)).fetchall()
+    seen = set()
+    for h, a, hs, as_ in rows:
+        gh, ga = grp_of.get(h), grp_of.get(a)
+        if not gh or gh != ga:               # knockout / unknown pairing → skip
+            continue
+        key = frozenset((h, a))
+        if key in seen:                      # dedupe reversed/duplicate feed rows
+            continue
+        seen.add(key)
+        H, A = stats[h], stats[a]
+        H["p"] += 1; A["p"] += 1
+        H["gf"] += hs; H["ga"] += as_; A["gf"] += as_; A["ga"] += hs
+        if hs > as_:   H["w"] += 1; A["l"] += 1; H["pts"] += 3
+        elif hs < as_: A["w"] += 1; H["l"] += 1; A["pts"] += 3
+        else:          H["d"] += 1; A["d"] += 1; H["pts"] += 1; A["pts"] += 1
+    out = {}
+    for g, teams in field_2026.OFFICIAL_GROUPS.items():
+        table = sorted(
+            (dict(team=t, gd=stats[t]["gf"] - stats[t]["ga"], **stats[t])
+             for t in teams),
+            key=lambda s: (s["pts"], s["gd"], s["gf"]), reverse=True)
+        for i, s in enumerate(table):
+            s["pos"] = i + 1
+        ngames = sum(s["p"] for s in table) // 2     # each game touches two teams
+        status = ("complete" if ngames >= 6 else "live" if ngames > 0 else "pending")
+        out[g] = {"status": status, "table": table}
+    return out
+
+
 def _build_bracket() -> dict:
-    """Compute the official R32->Final wallchart and the model's 'chalk' path
-    (the higher pairwise win-prob team advances at every tie). Cached per run."""
+    """The official R32->Final wallchart, led by *reality* and underlaid by the
+    model's projection.
+
+    Slots are filled by the real group standings the moment a group starts playing
+    (confirmed once a group is mathematically complete); the eight best 3rd-placed
+    sides switch from an Elo projection to the real ranking once every group is in.
+    Each tie carries the real result when that fixture has been played; otherwise it
+    falls back to the model's 'chalk' pick (the higher pairwise win-prob side) as
+    secondary side-info. Cached per run."""
     global _BRACKET_CACHE
     if _BRACKET_CACHE is not None:
         return _BRACKET_CACHE
@@ -315,9 +369,33 @@ def _build_bracket() -> dict:
         proj["1" + g] = names[0]
         proj["2" + g] = names[1]
 
-    # Fill the eight 3rd-place slots: best available 3rd (by Elo) among the
-    # groups each slot is allowed to draw from (FIFA Annex C ranges).
-    thirds = {g: rows[2][0] for g, rows in adv.items()}
+    # ---- reality overlay: real standings replace the Elo projection per group ----
+    real = _real_group_tables()
+    all_done = all(info["status"] == "complete" for info in real.values())
+    confirmed = {}     # team -> True once its group is complete (slot locked)
+    provisional = {}   # team -> True while it currently holds an advancing slot live
+    thirds = {g: rows[2][0] for g, rows in adv.items()}   # default: Elo 3rd
+    for g, info in real.items():
+        if info["status"] == "pending":
+            continue                                       # keep the Elo projection
+        tbl, done = info["table"], info["status"] == "complete"
+        proj["1" + g], proj["2" + g] = tbl[0]["team"], tbl[1]["team"]
+        thirds[g] = tbl[2]["team"]
+        for t in (tbl[0]["team"], tbl[1]["team"]):
+            confirmed[t] = done
+            if not done:
+                provisional[t] = True
+
+    # Fill the eight 3rd-place slots: real best-3rds (points, GD, GF) outrank any
+    # still-projected group; within a tier, by the relevant yardstick. A real 3rd
+    # is only *confirmed* once every group is complete (the cut can still move).
+    def third_score(g):
+        info = real[g]
+        if info["status"] == "complete":
+            s = info["table"][2]
+            return (1, s["pts"], s["gd"], s["gf"], elo_of.get(thirds[g], 0))
+        return (0, 0, 0, 0, elo_of.get(thirds[g], 0))
+
     used = set()
     for slot in sorted(field_2026.ALLOWED_THIRDS,
                        key=lambda s: len(field_2026.ALLOWED_THIRDS[s])):
@@ -325,11 +403,36 @@ def _build_bracket() -> dict:
                  and g not in used]
         if not cands:
             cands = [g for g in thirds if g not in used]
-        best = max(cands, key=lambda g: elo_of.get(thirds[g], 0))
+        best = max(cands, key=third_score)
         used.add(best)
         proj[slot] = thirds[best]
-        proj_meta_src = proj.setdefault("_third_src", {})
-        proj_meta_src[slot] = best
+        proj.setdefault("_third_src", {})[slot] = best
+        if all_done:
+            confirmed[thirds[best]] = True
+        elif real[best]["status"] != "pending":
+            provisional[thirds[best]] = True
+
+    # ---- real knockout results: a pairing that has actually been played ----
+    with db.connect() as conn:
+        ko_rows = conn.execute(
+            "SELECT home_team, away_team, home_score, away_score FROM matches "
+            "WHERE tournament='FIFA World Cup' AND match_date >= %s "
+            "AND home_score IS NOT NULL AND away_score IS NOT NULL",
+            (WC_START,)).fetchall()
+    real_match = {}    # frozenset({a,b}) -> (home, hs, as)
+    for h, a, hs, as_ in ko_rows:
+        real_match[frozenset((h, a))] = (h, hs, as_)
+
+    def played_result(a: str, b: str):
+        """Real (winner, 'a-b score') for this tie if it has been played, else None.
+        A recorded draw (shootout, unknown winner) returns no winner."""
+        r = real_match.get(frozenset((a, b)))
+        if not r:
+            return None
+        home, hs, as_ = r
+        ah, bh = (hs, as_) if home == a else (as_, hs)
+        winner = a if ah > bh else b if bh > ah else None
+        return winner, f"{ah}-{bh}"
 
     p = predictor()
 
@@ -342,16 +445,34 @@ def _build_bracket() -> dict:
                 "iso2": flagmod.iso2(team),
                 "elo": round(elo_of.get(team, p.elo.get(team, config.ELO_START))),
                 "p_win": pwin.get(team, 0.0),
-                "confed": field_2026.CONFED_OF.get(team, "?")}
+                "confed": field_2026.CONFED_OF.get(team, "?"),
+                "confirmed": bool(confirmed.get(team, False)),
+                "provisional": bool(provisional.get(team, False))}
+
+    played_count = {"r32": 0, "r16": 0, "qf": 0, "sf": 0, "final": 0}
+
+    def make_tie(m, a, b, stage):
+        """A tie led by the real result when known, else the model's chalk pick.
+        `winner` is the real advancer once decided (so the projected rounds and the
+        mural's river flow from reality) and the model pick beforehand."""
+        pick = beats(a, b)
+        res = played_result(a, b)
+        if res and res[0]:
+            winner, score, played = res[0], res[1], True
+            played_count[stage] += 1
+        else:
+            winner, score, played = pick, (res[1] if res else None), False
+        results[m] = winner
+        return {"match": m, "a": card(a), "b": card(b),
+                "winner": winner, "pick": pick, "played": played, "score": score}
 
     r32 = []
     results = {}
     for m, s1, s2 in field_2026.R32:
         a, b = proj[s1], proj[s2]
-        w = beats(a, b)
-        results[m] = w
-        r32.append({"match": m, "slot1": s1, "slot2": s2,
-                    "a": card(a), "b": card(b), "winner": w})
+        t = make_tie(m, a, b, "r32")
+        t["slot1"], t["slot2"] = s1, s2
+        r32.append(t)
 
     rounds = {"r16": [], "qf": [], "sf": [], "final": []}
     stage_of = {**{m: "r16" for m in range(89, 97)},
@@ -360,18 +481,39 @@ def _build_bracket() -> dict:
     for m in (89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 104):
         s1, s2 = field_2026.BRACKET[m]
         a, b = results[s1], results[s2]
-        w = beats(a, b)
-        results[m] = w
-        rounds[stage_of[m]].append(
-            {"match": m, "a": card(a), "b": card(b), "winner": w})
+        rounds[stage_of[m]].append(make_tie(m, a, b, stage_of[m]))
+
+    # ---- live state summary for the panel header ----
+    groups_done = sum(1 for i in real.values() if i["status"] == "complete")
+    qualified = sorted(t for t, c in confirmed.items() if c)
+    if groups_done < 12:
+        stage = f"Group stage · {groups_done} of 12 groups decided"
+    elif played_count["r32"] < 16:
+        stage = f"Round of 32 · {played_count['r32']} of 16 ties played"
+    elif played_count["r16"] < 8:
+        stage = f"Round of 16 · {played_count['r16']} of 8 ties played"
+    elif played_count["qf"] < 4:
+        stage = f"Quarter-finals · {played_count['qf']} of 4 played"
+    elif played_count["sf"] < 2:
+        stage = f"Semi-finals · {played_count['sf']} of 2 played"
+    elif played_count["final"] < 1:
+        stage = "The Final"
+    else:
+        stage = "Tournament complete"
 
     _BRACKET_CACHE = {
         "r32": r32, "rounds": rounds,
         "champion": card(results[104]),
         "third_src": proj.get("_third_src", {}),
-        "note": "Slots 1X/2X = projected group winners/runners by Elo; T## = best "
-                "available 3rd by Elo within FIFA Annex C ranges. The highlighted "
-                "path advances the higher pairwise win-probability side each tie.",
+        "live": {"groups_done": groups_done, "groups_total": 12,
+                 "qualified": qualified, "qualified_n": len(qualified),
+                 "thirds_locked": all_done, "stage": stage,
+                 "played": played_count},
+        "note": "Live R32 slots fill from the real group tables (✓ confirmed once a "
+                "group is complete); the 8 best 3rd-placed sides lock once every "
+                "group is in. Played ties show the real result; unplayed ties show "
+                "the model's pick (faint) as side-info. The projected champion is the "
+                "model's, not a result.",
     }
     return _BRACKET_CACHE
 
