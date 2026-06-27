@@ -237,4 +237,34 @@ def ingest(verbose: bool = True) -> dict:
             print("  football-data returned no matches — falling back to sportsdb")
         return {"fallback": True, "sportsdb": _sportsdb.ingest(verbose=verbose)}
     n = _store(ms)
-    if verb
+    if verbose:
+        print(f"  footballdata feed: {n['finished']} finished, {n['live']} live, "
+              f"{n['scheduled']} scheduled (of {len(ms)} fetched)")
+    return n
+
+
+if __name__ == "__main__":
+    res = ingest()
+    print(res)
+    print('\n  Next World Cup fixtures:')
+    matches = []
+    if not res.get('fallback'):
+        try:
+            matches = upcoming()[:12]
+        except Exception:
+            matches = []
+    if not matches:
+        try:
+            matches = _sportsdb.upcoming()[:12]
+        except Exception:
+            matches = []
+    for m in matches:
+        if isinstance(m, dict) and 'utcDate' in m:
+            d = (m.get('utcDate') or '')[:10]
+            ht = _sportsdb._canon((m.get('homeTeam') or {}).get('name', ''))
+            at = _sportsdb._canon((m.get('awayTeam') or {}).get('name', ''))
+        else:
+            d = (m.get('dateEvent') or '')
+            ht = _sportsdb._canon(m.get('strHomeTeam'))
+            at = _sportsdb._canon(m.get('strAwayTeam'))
+        print(f"   {d} {ht} v {at}")

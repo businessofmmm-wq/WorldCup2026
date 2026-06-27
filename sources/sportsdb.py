@@ -218,4 +218,35 @@ def event_timeline(event_id: str) -> dict:
         elif "card" in kind:
             weight = 0.2
         else:
-     
+            weight = 0.3
+        out.append({"minute": minute, "type": kind or "event", "side": side,
+                    "label": (t.get("strPlayer") or "").strip() or None,
+                    "weight": weight})
+    out.sort(key=lambda x: x["minute"])
+    return {"events": out, "goals_home": gh, "goals_away": ga}
+
+
+def ingest(verbose: bool = True) -> dict:
+    up, res = [], []
+    try:
+        up = upcoming()
+    except Exception as exc:
+        if verbose:
+            print(f"  upcoming skipped: {exc}")
+    try:
+        res = recent_results()
+    except Exception as exc:
+        if verbose:
+            print(f"  results skipped: {exc}")
+    n_up = _store(up, "scheduled")
+    n_res = _store(res, "finished")
+    if verbose:
+        print(f"  live feed: {n_up} upcoming, {n_res} recent results stored")
+    return {"upcoming": n_up, "results": n_res}
+
+
+if __name__ == "__main__":
+    print(ingest())
+    print("\n  Next World Cup fixtures:")
+    for e in upcoming()[:12]:
+        print(f"   {e.get('dateEvent')} {e.get('strEvent')}")
