@@ -141,6 +141,24 @@ def _store(matches: list[dict]) -> dict:
                 """,
                 (home, away, tournament, d - dt.timedelta(days=1), d + dt.timedelta(days=1), d),
             ).fetchone()
+            # Some feeds list host-nation matches with the host as "away" (because
+            # the venue is in the host country but the API treats it as neutral).
+            # If the exact (home, away) pair isn't found, check the reversed order.
+            # When found reversed, swap the scores so they match the canonical
+            # (home_team, away_team) already stored in the DB.
+            if not existing:
+                rev = conn.execute(
+                    """
+                    SELECT id, home_score, away_score, status FROM matches
+                    WHERE home_team=%s AND away_team=%s AND tournament=%s
+                      AND match_date BETWEEN %s AND %s
+                    ORDER BY abs(match_date - %s) LIMIT 1
+                    """,
+                    (away, home, tournament, d - dt.timedelta(days=1), d + dt.timedelta(days=1), d),
+                ).fetchone()
+                if rev:
+                    existing = rev
+                    hs, as_ = as_, hs   # flip to match the canonical home/away
             if existing:
                 mid, old_hs, old_as, old_status = existing
                 if hs is None and old_hs is not None:
@@ -219,34 +237,4 @@ def ingest(verbose: bool = True) -> dict:
             print("  football-data returned no matches — falling back to sportsdb")
         return {"fallback": True, "sportsdb": _sportsdb.ingest(verbose=verbose)}
     n = _store(ms)
-    if verbose:
-        print(f"  footballdata feed: {n['finished']} finished, {n['live']} live, "
-              f"{n['scheduled']} scheduled (of {len(ms)} fetched)")
-    return n
-
-
-if __name__ == "__main__":
-    res = ingest()
-    print(res)
-    print('\n  Next World Cup fixtures:')
-    matches = []
-    if not res.get('fallback'):
-        try:
-            matches = upcoming()[:12]
-        except Exception:
-            matches = []
-    if not matches:
-        try:
-            matches = _sportsdb.upcoming()[:12]
-        except Exception:
-            matches = []
-    for m in matches:
-        if isinstance(m, dict) and 'utcDate' in m:
-            d = (m.get('utcDate') or '')[:10]
-            ht = _sportsdb._canon((m.get('homeTeam') or {}).get('name', ''))
-            at = _sportsdb._canon((m.get('awayTeam') or {}).get('name', ''))
-        else:
-            d = (m.get('dateEvent') or '')
-            ht = _sportsdb._canon(m.get('strHomeTeam'))
-            at = _sportsdb._canon(m.get('strAwayTeam'))
-        print(f"   {d} {ht} v {at}")
+    if verb

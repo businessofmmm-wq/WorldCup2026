@@ -106,6 +106,25 @@ def _store(events: list[dict], status: str) -> int:
                 (home, away, tournament,
                  d - dt.timedelta(days=1), d + dt.timedelta(days=1), d),
             ).fetchone()
+            # Some feeds list host-nation matches with the host as "away" (because
+            # the venue is in the host country but the API treats it as neutral).
+            # If the exact (home, away) pair isn't found, check the reversed order.
+            # When found reversed, swap the scores so they match the canonical
+            # (home_team, away_team) already stored in the DB.
+            if not row:
+                rev = conn.execute(
+                    """
+                    SELECT id, home_score, away_score FROM matches
+                    WHERE home_team=%s AND away_team=%s AND tournament=%s
+                      AND match_date BETWEEN %s AND %s
+                    ORDER BY abs(match_date - %s) LIMIT 1
+                    """,
+                    (away, home, tournament,
+                     d - dt.timedelta(days=1), d + dt.timedelta(days=1), d),
+                ).fetchone()
+                if rev:
+                    row = rev
+                    hs, as_ = as_, hs   # flip to match the canonical home/away
             if row:
                 mid, old_hs, old_as = row
                 if hs is None and old_hs is not None:
@@ -199,35 +218,4 @@ def event_timeline(event_id: str) -> dict:
         elif "card" in kind:
             weight = 0.2
         else:
-            weight = 0.3
-        out.append({"minute": minute, "type": kind or "event", "side": side,
-                    "label": (t.get("strPlayer") or "").strip() or None,
-                    "weight": weight})
-    out.sort(key=lambda x: x["minute"])
-    return {"events": out, "goals_home": gh, "goals_away": ga}
-
-
-def ingest(verbose: bool = True) -> dict:
-    up, res = [], []
-    try:
-        up = upcoming()
-    except Exception as exc:
-        if verbose:
-            print(f"  upcoming skipped: {exc}")
-    try:
-        res = recent_results()
-    except Exception as exc:
-        if verbose:
-            print(f"  results skipped: {exc}")
-    n_up = _store(up, "scheduled")
-    n_res = _store(res, "finished")
-    if verbose:
-        print(f"  live feed: {n_up} upcoming, {n_res} recent results stored")
-    return {"upcoming": n_up, "results": n_res}
-
-
-if __name__ == "__main__":
-    print(ingest())
-    print("\n  Next World Cup fixtures:")
-    for e in upcoming()[:12]:
-        print(f"   {e.get('dateEvent')} {e.get('strEvent')}")
+     

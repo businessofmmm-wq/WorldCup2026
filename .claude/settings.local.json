@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git checkout *)",
+      "Bash(rm -f python)",
+      "WebFetch(domain:wcpa26.com)",
+      "Bash(curl -s -A \"Mozilla/5.0\" --max-time 20 \"https://wcpa26.com/api/sim_report.json\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -A \"Mozilla/5.0\" --max-time 20 \"https://wcpa26.com/\")"
+    ]
+  }
+}
