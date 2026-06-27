@@ -25,11 +25,6 @@ World Cup 2026 prediction engine — command line.
     python run.py audit [--no-load]      security + stability + load + hygiene gate
     python run.py simvar [-n N -r R]     variance-reduction benchmark (QMC/antithetic/CV)
     python run.py cv <clip> --home H --away A --date D   Quantum Tactics CV pass (local, CC clip)
-    python run.py shorts result [--match "A|B"]         YouTube Short — match result card
-    python run.py shorts daily                          YouTube Short — today's predictions
-    python run.py shorts odds                           YouTube Short — title odds leaderboard
-    python run.py shorts r32 [--match "A|B"]            YouTube Short — R32 match preview
-    python run.py shorts watch [--interval 60]          live production pipeline (auto-gen)
 
 `refresh` is the inflow loop: pull the newest results/news, fold them into the
 ratings, and re-run the simulation so predictions always reflect latest data.
@@ -282,39 +277,6 @@ def cmd_cv(args):
     ]))
 
 
-def _shorts_voice_args(args) -> list[str]:
-    extra: list[str] = []
-    if getattr(args, "voice", True) is False:
-        extra.append("--no-voice")
-    if getattr(args, "voice_name", None):
-        extra += ["--voice-name", args.voice_name]
-    if getattr(args, "rate", None) is not None:
-        extra += ["--rate", str(args.rate)]
-    return extra
-
-
-def cmd_shorts(args):
-    mode = args.shorts_mode
-    if mode == "watch":
-        from tools import shorts_pipeline
-        watch_args = []
-        if hasattr(args, "interval") and args.interval:
-            watch_args += ["--interval", str(args.interval)]
-        if getattr(args, "auto_open", False):
-            watch_args.append("--auto-open")
-        if getattr(args, "once", False):
-            watch_args.append("--once")
-        watch_args += _shorts_voice_args(args)
-        shorts_pipeline.main(watch_args)
-    else:
-        from tools import shorts_gen
-        extra = []
-        if hasattr(args, "match") and args.match:
-            extra = ["--match", args.match]
-        extra += _shorts_voice_args(args)
-        shorts_gen.main([mode] + extra)
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="World Cup 2026 prediction engine — command line.",
@@ -402,37 +364,6 @@ def build_parser() -> argparse.ArgumentParser:
     cv.add_argument("--away", required=True)
     cv.add_argument("--date", required=True)
     cv.set_defaults(func=cmd_cv)
-
-    def _voice_flags(sp):
-        sp.add_argument("--no-voice", dest="voice", action="store_false",
-                        help="render silent (skip the SAPI5 narration)")
-        sp.add_argument("--voice-name", default=None,
-                        help='SAPI5 voice substring, e.g. "Zira", "David", "Hazel"')
-        sp.add_argument("--rate", type=int, default=None,
-                        help="speech rate, -10 (slow) .. 10 (fast); default -1")
-        sp.set_defaults(voice=True)
-
-    shorts = subparsers.add_parser("shorts", help="generate a YouTube Shorts MP4 from model data")
-    shorts_sub = shorts.add_subparsers(dest="shorts_mode", metavar="MODE", required=True)
-    sp_result = shorts_sub.add_parser("result", help="latest completed match result Short")
-    sp_result.add_argument("--match", default=None, help='filter: "Spain|Morocco"')
-    _voice_flags(sp_result)
-    sp_daily = shorts_sub.add_parser("daily", help="today\'s upcoming predictions Short")
-    _voice_flags(sp_daily)
-    sp_odds = shorts_sub.add_parser("odds",  help="title-odds leaderboard Short")
-    _voice_flags(sp_odds)
-    sp_r32 = shorts_sub.add_parser("r32", help="R32 match preview Short")
-    sp_r32.add_argument("--match", default=None, help='filter: "Germany|Sweden"')
-    _voice_flags(sp_r32)
-    sp_watch = shorts_sub.add_parser("watch", help="live production pipeline (auto-generate Shorts)")
-    sp_watch.add_argument("--interval",  type=int, default=60,
-                          help="poll interval in seconds (default 60)")
-    sp_watch.add_argument("--auto-open", dest="auto_open", action="store_true",
-                          help="open each generated MP4 in the default player")
-    sp_watch.add_argument("--once",      action="store_true",
-                          help="run one scan then exit (useful for cron)")
-    _voice_flags(sp_watch)
-    shorts.set_defaults(func=cmd_shorts)
 
     return parser
 
