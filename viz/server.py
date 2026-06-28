@@ -412,6 +412,37 @@ def _build_bracket() -> dict:
         elif real[best]["status"] != "pending":
             provisional[thirds[best]] = True
 
+    # ---- real fixture override: correct any T## mis-assignments ----
+    # The greedy thirds algorithm may not match FIFA's official slot announcement.
+    # Once all groups are done, use the real R32 fixtures from the DB to fix it.
+    if all_done:
+        with db.connect() as conn:
+            ko_upcoming = conn.execute(
+                "SELECT home_team, away_team FROM matches "
+                "WHERE tournament='FIFA World Cup' AND home_score IS NULL "
+                "AND match_date BETWEEN %s AND %s ORDER BY match_date",
+                (dt.date(2026, 6, 28), dt.date(2026, 7, 5)),
+            ).fetchall()
+        # Build team→real_opponent lookup; first-seen wins (avoids stale duplicates)
+        _real_r32_opp: dict[str, str] = {}
+        for _h, _a in ko_upcoming:
+            if _h in field_2026.FIELD and _a in field_2026.FIELD:
+                _real_r32_opp.setdefault(_h, _a)
+                _real_r32_opp.setdefault(_a, _h)
+        # Correct T## slots where the algorithm assigned the wrong third
+        for _, _s1, _s2 in field_2026.R32:
+            for _t_slot, _anchor_slot in ((_s2, _s1), (_s1, _s2)):
+                if not _t_slot.startswith("T"):
+                    continue
+                _anchor = proj.get(_anchor_slot)
+                _wrong  = proj.get(_t_slot)
+                if not _anchor or not _wrong:
+                    break
+                _real = _real_r32_opp.get(_anchor)
+                if _real and _real != _wrong:
+                    proj[_t_slot] = _real
+                break
+
     # ---- real knockout results: a pairing that has actually been played ----
     with db.connect() as conn:
         ko_rows = conn.execute(
@@ -607,10 +638,17 @@ def ep_fixtures(q) -> dict:
 
     upcoming, completed = [], []
     played = called = 0
+    _seen_pairs: set = set()   # frozenset(home, away) — deduplicates same match stored twice
     for (d, home, away, hs, as_, neutral, city, country) in rows:
         neutral = bool(neutral)
-        pr = p.predict(home, away, neutral=neutral, log=False)
+        pair = frozenset((home, away))
         done = hs is not None and as_ is not None
+        # Skip duplicate completed matches (same teams, different home/away order or date)
+        if done and pair in _seen_pairs:
+            continue
+        if done:
+            _seen_pairs.add(pair)
+        pr = p.predict(home, away, neutral=neutral, log=False)
         # Completed ties are shown + graded on the frozen pre-kickoff call when
         # one was stored; the live recompute is only the (pre-tournament) fallback.
         fz = frozen.get((home, away)) if done else None

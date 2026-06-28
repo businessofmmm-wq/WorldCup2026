@@ -82,23 +82,21 @@ KICKOFFS_UTC = {
     ('Croatia', 'Ghana'): '2026-06-27T21:00:00Z',
 
     # ── Round of 32 ──────────────────────────────────────────────────────────
-    # Provisional team names used where group J/K/L not yet final (Jun 27).
-    # Run `python run.py ingest live` after today's games to correct any wrong
-    # provisional assignments.
+    # Official bracket confirmed once all group games finished (Jun 28 2026).
     ('South Africa', 'Canada'):                '2026-06-28T19:00:00Z',  # M73
     ('Brazil', 'Japan'):                       '2026-06-29T17:00:00Z',  # M76
-    ('Germany', 'Sweden'):                     '2026-06-29T20:30:00Z',  # M74
+    ('Germany', 'Paraguay'):                   '2026-06-29T20:30:00Z',  # M74
     ('Netherlands', 'Morocco'):                '2026-06-30T01:00:00Z',  # M75
     ('Ivory Coast', 'Norway'):                 '2026-06-30T17:00:00Z',  # M78
-    ('France', 'Paraguay'):                    '2026-06-30T21:00:00Z',  # M77
+    ('France', 'Sweden'):                      '2026-06-30T21:00:00Z',  # M77
     ('Mexico', 'Ecuador'):                     '2026-07-01T01:00:00Z',  # M79
-    ('England', 'Senegal'):                    '2026-07-01T16:00:00Z',  # M80
-    ('Belgium', 'South Korea'):                '2026-07-01T20:00:00Z',  # M82
+    ('England', 'DR Congo'):                   '2026-07-01T16:00:00Z',  # M80
+    ('Belgium', 'Senegal'):                    '2026-07-01T20:00:00Z',  # M82
     ('United States', 'Bosnia and Herzegovina'): '2026-07-02T00:00:00Z',  # M81
     ('Spain', 'Austria'):                      '2026-07-02T19:00:00Z',  # M84
-    ('Portugal', 'Ghana'):                     '2026-07-02T23:00:00Z',  # M83
-    ('Switzerland', 'Iran'):                   '2026-07-03T03:00:00Z',  # M85
+    ('Portugal', 'Croatia'):                   '2026-07-02T23:00:00Z',  # M83/M87
+    ('Algeria', 'Switzerland'):                '2026-07-03T03:00:00Z',  # M85
     ('Australia', 'Egypt'):                    '2026-07-03T18:00:00Z',  # M88
     ('Argentina', 'Cape Verde'):               '2026-07-03T22:00:00Z',  # M86
-    ('Colombia', 'Croatia'):                   '2026-07-04T01:30:00Z',  # M87
+    ('Colombia', 'Ghana'):                     '2026-07-04T01:30:00Z',  # M83/M87
 }
