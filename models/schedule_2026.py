@@ -1,9 +1,9 @@
-"""Auto-generated: 2026 World Cup group-stage kickoff times (UTC).
+"""Auto-generated: 2026 World Cup kickoff times (UTC), all known pairings.
 
-Harvested from TheSportsDB eventsround (strTimestamp is UTC) and matched to the
-DB fixtures by team pair. The front-end localises each time to the viewers own
-timezone, so every fan sees kickoffs on their local clock. Knockouts (TBD teams)
-are added once drawn. Re-harvest TheSportsDB eventsround r=1..3 to regenerate.
+Group stage harvested from TheSportsDB eventsround; knockout rounds merged in
+by tools/harvest_kickoffs.py from football-data.org utcDate as each round's
+pairings become known. The front-end localises each time to the viewer's own
+timezone. Re-run `python tools/harvest_kickoffs.py` after every round.
 """
 
 # (home_team, away_team) -> ISO-8601 UTC kickoff
@@ -17,86 +17,92 @@ KICKOFFS_UTC = {
     ('Haiti', 'Scotland'): '2026-06-14T01:00:00Z',
     ('Australia', 'Turkey'): '2026-06-14T04:00:00Z',
     ('Germany', 'Curaçao'): '2026-06-14T17:00:00Z',
-    ('Ivory Coast', 'Ecuador'): '2026-06-14T23:00:00Z',
     ('Netherlands', 'Japan'): '2026-06-14T20:00:00Z',
+    ('Ivory Coast', 'Ecuador'): '2026-06-14T23:00:00Z',
     ('Sweden', 'Tunisia'): '2026-06-15T02:00:00Z',
-    ('Belgium', 'Egypt'): '2026-06-15T19:00:00Z',
-    ('Iran', 'New Zealand'): '2026-06-16T01:00:00Z',
     ('Spain', 'Cape Verde'): '2026-06-15T16:00:00Z',
+    ('Belgium', 'Egypt'): '2026-06-15T19:00:00Z',
     ('Saudi Arabia', 'Uruguay'): '2026-06-15T22:00:00Z',
+    ('Iran', 'New Zealand'): '2026-06-16T01:00:00Z',
     ('France', 'Senegal'): '2026-06-16T19:00:00Z',
     ('Iraq', 'Norway'): '2026-06-16T22:00:00Z',
     ('Argentina', 'Algeria'): '2026-06-17T01:00:00Z',
     ('Austria', 'Jordan'): '2026-06-17T04:00:00Z',
     ('Portugal', 'DR Congo'): '2026-06-17T17:00:00Z',
-    ('Uzbekistan', 'Colombia'): '2026-06-18T02:00:00Z',
     ('England', 'Croatia'): '2026-06-17T20:00:00Z',
     ('Ghana', 'Panama'): '2026-06-17T23:00:00Z',
+    ('Uzbekistan', 'Colombia'): '2026-06-18T02:00:00Z',
     ('Czech Republic', 'South Africa'): '2026-06-18T16:00:00Z',
-    ('Mexico', 'South Korea'): '2026-06-19T01:00:00Z',
     ('Switzerland', 'Bosnia and Herzegovina'): '2026-06-18T19:00:00Z',
     ('Canada', 'Qatar'): '2026-06-18T22:00:00Z',
+    ('Mexico', 'South Korea'): '2026-06-19T01:00:00Z',
+    ('United States', 'Australia'): '2026-06-19T19:00:00Z',
     ('Scotland', 'Morocco'): '2026-06-19T22:00:00Z',
     ('Brazil', 'Haiti'): '2026-06-20T00:30:00Z',
-    ('United States', 'Australia'): '2026-06-19T19:00:00Z',
     ('Turkey', 'Paraguay'): '2026-06-20T03:00:00Z',
+    ('Netherlands', 'Sweden'): '2026-06-20T17:00:00Z',
     ('Germany', 'Ivory Coast'): '2026-06-20T20:00:00Z',
     ('Ecuador', 'Curaçao'): '2026-06-21T00:00:00Z',
-    ('Netherlands', 'Sweden'): '2026-06-20T17:00:00Z',
     ('Tunisia', 'Japan'): '2026-06-21T04:00:00Z',
-    ('Belgium', 'Iran'): '2026-06-21T19:00:00Z',
-    ('New Zealand', 'Egypt'): '2026-06-22T01:00:00Z',
     ('Spain', 'Saudi Arabia'): '2026-06-21T16:00:00Z',
+    ('Belgium', 'Iran'): '2026-06-21T19:00:00Z',
     ('Uruguay', 'Cape Verde'): '2026-06-21T22:00:00Z',
+    ('New Zealand', 'Egypt'): '2026-06-22T01:00:00Z',
+    ('Argentina', 'Austria'): '2026-06-22T17:00:00Z',
     ('France', 'Iraq'): '2026-06-22T21:00:00Z',
     ('Norway', 'Senegal'): '2026-06-23T00:00:00Z',
-    ('Argentina', 'Austria'): '2026-06-22T17:00:00Z',
     ('Jordan', 'Algeria'): '2026-06-23T03:00:00Z',
     ('Portugal', 'Uzbekistan'): '2026-06-23T17:00:00Z',
-    ('Colombia', 'DR Congo'): '2026-06-24T02:00:00Z',
     ('England', 'Ghana'): '2026-06-23T20:00:00Z',
     ('Panama', 'Croatia'): '2026-06-23T23:00:00Z',
+    ('Colombia', 'DR Congo'): '2026-06-24T02:00:00Z',
+    ('Bosnia and Herzegovina', 'Qatar'): '2026-06-24T19:00:00Z',
+    ('Canada', 'Switzerland'): '2026-06-24T19:00:00Z',
+    ('Switzerland', 'Canada'): '2026-06-24T19:00:00Z',
+    ('Morocco', 'Haiti'): '2026-06-24T22:00:00Z',
+    ('Scotland', 'Brazil'): '2026-06-24T22:00:00Z',
+    ('Czech Republic', 'Mexico'): '2026-06-25T01:00:00Z',
     ('Mexico', 'Czech Republic'): '2026-06-25T01:00:00Z',
     ('South Africa', 'South Korea'): '2026-06-25T01:00:00Z',
-    ('Canada', 'Switzerland'): '2026-06-24T19:00:00Z',
-    ('Bosnia and Herzegovina', 'Qatar'): '2026-06-24T19:00:00Z',
-    ('Scotland', 'Brazil'): '2026-06-24T22:00:00Z',
-    ('Morocco', 'Haiti'): '2026-06-24T22:00:00Z',
-    ('United States', 'Turkey'): '2026-06-26T02:00:00Z',
-    ('Paraguay', 'Australia'): '2026-06-26T02:00:00Z',
     ('Curaçao', 'Ivory Coast'): '2026-06-25T20:00:00Z',
     ('Ecuador', 'Germany'): '2026-06-25T20:00:00Z',
     ('Japan', 'Sweden'): '2026-06-25T23:00:00Z',
     ('Tunisia', 'Netherlands'): '2026-06-25T23:00:00Z',
-    ('Egypt', 'Iran'): '2026-06-27T03:00:00Z',
-    ('New Zealand', 'Belgium'): '2026-06-27T03:00:00Z',
-    ('Cape Verde', 'Saudi Arabia'): '2026-06-27T00:00:00Z',
-    ('Uruguay', 'Spain'): '2026-06-27T00:00:00Z',
+    ('Paraguay', 'Australia'): '2026-06-26T02:00:00Z',
+    ('Turkey', 'United States'): '2026-06-26T02:00:00Z',
+    ('United States', 'Turkey'): '2026-06-26T02:00:00Z',
     ('Norway', 'France'): '2026-06-26T19:00:00Z',
     ('Senegal', 'Iraq'): '2026-06-26T19:00:00Z',
-    ('Algeria', 'Austria'): '2026-06-28T02:00:00Z',
-    ('Jordan', 'Argentina'): '2026-06-28T02:00:00Z',
+    ('Cape Verde', 'Saudi Arabia'): '2026-06-27T00:00:00Z',
+    ('Uruguay', 'Spain'): '2026-06-27T00:00:00Z',
+    ('Egypt', 'Iran'): '2026-06-27T03:00:00Z',
+    ('New Zealand', 'Belgium'): '2026-06-27T03:00:00Z',
+    ('Croatia', 'Ghana'): '2026-06-27T21:00:00Z',
+    ('Panama', 'England'): '2026-06-27T21:00:00Z',
     ('Colombia', 'Portugal'): '2026-06-27T23:30:00Z',
     ('DR Congo', 'Uzbekistan'): '2026-06-27T23:30:00Z',
-    ('Panama', 'England'): '2026-06-27T21:00:00Z',
-    ('Croatia', 'Ghana'): '2026-06-27T21:00:00Z',
-
-    # ── Round of 32 ──────────────────────────────────────────────────────────
-    # Official bracket confirmed once all group games finished (Jun 28 2026).
-    ('South Africa', 'Canada'):                '2026-06-28T19:00:00Z',  # M73
-    ('Brazil', 'Japan'):                       '2026-06-29T17:00:00Z',  # M76
-    ('Germany', 'Paraguay'):                   '2026-06-29T20:30:00Z',  # M74
-    ('Netherlands', 'Morocco'):                '2026-06-30T01:00:00Z',  # M75
-    ('Ivory Coast', 'Norway'):                 '2026-06-30T17:00:00Z',  # M78
-    ('France', 'Sweden'):                      '2026-06-30T21:00:00Z',  # M77
-    ('Mexico', 'Ecuador'):                     '2026-07-01T01:00:00Z',  # M79
-    ('England', 'DR Congo'):                   '2026-07-01T16:00:00Z',  # M80
-    ('Belgium', 'Senegal'):                    '2026-07-01T20:00:00Z',  # M82
-    ('United States', 'Bosnia and Herzegovina'): '2026-07-02T00:00:00Z',  # M81
-    ('Spain', 'Austria'):                      '2026-07-02T19:00:00Z',  # M84
-    ('Portugal', 'Croatia'):                   '2026-07-02T23:00:00Z',  # M83/M87
-    ('Algeria', 'Switzerland'):                '2026-07-03T03:00:00Z',  # M85
-    ('Australia', 'Egypt'):                    '2026-07-03T18:00:00Z',  # M88
-    ('Argentina', 'Cape Verde'):               '2026-07-03T22:00:00Z',  # M86
-    ('Colombia', 'Ghana'):                     '2026-07-04T01:30:00Z',  # M83/M87
+    ('Algeria', 'Austria'): '2026-06-28T02:00:00Z',
+    ('Jordan', 'Argentina'): '2026-06-28T02:00:00Z',
+    ('South Africa', 'Canada'): '2026-06-28T19:00:00Z',
+    ('Brazil', 'Japan'): '2026-06-29T17:00:00Z',
+    ('Germany', 'Paraguay'): '2026-06-29T20:30:00Z',
+    ('Netherlands', 'Morocco'): '2026-06-30T01:00:00Z',
+    ('Ivory Coast', 'Norway'): '2026-06-30T17:00:00Z',
+    ('France', 'Sweden'): '2026-06-30T21:00:00Z',
+    ('Mexico', 'Ecuador'): '2026-07-01T01:00:00Z',
+    ('England', 'DR Congo'): '2026-07-01T16:00:00Z',
+    ('Belgium', 'Senegal'): '2026-07-01T20:00:00Z',
+    ('United States', 'Bosnia and Herzegovina'): '2026-07-02T00:00:00Z',
+    ('Spain', 'Austria'): '2026-07-02T19:00:00Z',
+    ('Portugal', 'Croatia'): '2026-07-02T23:00:00Z',
+    ('Algeria', 'Switzerland'): '2026-07-03T03:00:00Z',
+    ('Switzerland', 'Algeria'): '2026-07-03T03:00:00Z',
+    ('Australia', 'Egypt'): '2026-07-03T18:00:00Z',
+    ('Argentina', 'Cape Verde'): '2026-07-03T22:00:00Z',
+    ('Colombia', 'Ghana'): '2026-07-04T01:30:00Z',
+    ('Canada', 'Morocco'): '2026-07-04T17:00:00Z',
+    ('Paraguay', 'France'): '2026-07-04T21:00:00Z',
+    ('Brazil', 'Norway'): '2026-07-05T20:00:00Z',
+    ('Mexico', 'England'): '2026-07-06T00:00:00Z',
+    ('United States', 'Belgium'): '2026-07-07T00:00:00Z',
 }

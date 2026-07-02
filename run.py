@@ -75,6 +75,12 @@ def cmd_ingest(args):
         print("[results]"); src_results.ingest()
     if what in ("live", "all"):
         print("[live]"); src_live.ingest()
+    if what in ("results", "live", "all"):
+        # The fixture feeds disagree on date conventions (local matchday vs
+        # UTC day), so the same tie can land as two rows a day apart. Merge
+        # them straight after every fixture ingest — idempotent, no-op when clean.
+        from sources import reconcile as src_reconcile
+        print("[reconcile]"); src_reconcile.reconcile()
     if what in ("news", "all"):
         print("[news]"); src_news.ingest()
     if what in ("xg", "all"):
