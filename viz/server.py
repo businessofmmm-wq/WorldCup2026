@@ -562,9 +562,21 @@ def _outcome(hs: int, as_: int) -> str:
     return "home" if hs > as_ else "away" if as_ > hs else "draw"
 
 
-def _kickoff_utc(home: str, away: str) -> dt.datetime | None:
-    iso = schedule_2026.KICKOFFS_UTC.get((home, away))
-    return dt.datetime.fromisoformat(iso.replace("Z", "+00:00")) if iso else None
+def _kickoff_utc(home: str, away: str,
+                 match_date: dt.date | None = None) -> dt.datetime | None:
+    # The harvest feeds sometimes list a tie in the opposite orientation to the
+    # stored row; kickoff time is orientation-independent, so try both. When the
+    # fixture's date is known, reject a stored kickoff further than 3 days from
+    # it — the same two teams can meet twice (group stage + final), and the
+    # rematch must never inherit the earlier meeting's kickoff.
+    iso = (schedule_2026.KICKOFFS_UTC.get((home, away))
+           or schedule_2026.KICKOFFS_UTC.get((away, home)))
+    if not iso:
+        return None
+    ko = dt.datetime.fromisoformat(iso.replace("Z", "+00:00"))
+    if match_date is not None and abs((ko.date() - match_date).days) > 3:
+        return None
+    return ko
 
 
 def log_upcoming_calls(horizon_hours: int = 36) -> int:
@@ -583,7 +595,7 @@ def log_upcoming_calls(horizon_hours: int = 36) -> int:
             (now.date() - dt.timedelta(days=1),)).fetchall()
     n = 0
     for d, h, a in rows:
-        ko = _kickoff_utc(h, a) or dt.datetime.combine(
+        ko = _kickoff_utc(h, a, d) or dt.datetime.combine(
             d, dt.time(12), tzinfo=dt.timezone.utc)
         if now - dt.timedelta(hours=3) <= ko <= now + dt.timedelta(hours=horizon_hours):
             try:
@@ -595,23 +607,27 @@ def log_upcoming_calls(horizon_hours: int = 36) -> int:
 
 
 def _frozen_calls(conn) -> dict:
-    """Latest stored pre-kickoff prediction per WC fixture, keyed (home, away).
-    Predictions are only logged while a fixture is unplayed, so every row
-    predates the result reaching the model; the kickoff cutoff (when known)
-    additionally drops anything logged in-play."""
+    """Stored pre-kickoff predictions per WC fixture: (home, away) -> list of
+    (match_date, call) in created_at order, so the grader can pick the latest
+    call belonging to *this* meeting of the pair (a rematch weeks later keeps
+    its own calls). Predictions are only logged while a fixture is unplayed,
+    so every row predates the result reaching the model; the kickoff cutoff
+    (when known) additionally drops anything logged in-play."""
     rows = conn.execute(
-        "SELECT home_team, away_team, created_at, p_home, p_draw, p_away, "
+        "SELECT home_team, away_team, match_date, created_at, "
+        "       p_home, p_draw, p_away, "
         "       exp_home_goals, exp_away_goals, top_scoreline "
         "FROM predictions WHERE match_date >= %s ORDER BY created_at",
         (WC_START,)).fetchall()
     out: dict = {}
-    for h, a, created, ph, pd_, pa, xh, xa, ts in rows:
-        ko = _kickoff_utc(h, a)
+    for h, a, md, created, ph, pd_, pa, xh, xa, ts in rows:
+        ko = _kickoff_utc(h, a, md)
         if ko is not None and created is not None and created > ko:
             continue
-        out[(h, a)] = {"p_home": ph, "p_draw": pd_, "p_away": pa,
-                       "exp_home_goals": xh, "exp_away_goals": xa,
-                       "top_scoreline": ts}
+        out.setdefault((h, a), []).append((md, {
+            "p_home": ph, "p_draw": pd_, "p_away": pa,
+            "exp_home_goals": xh, "exp_away_goals": xa,
+            "top_scoreline": ts}))
     return out
 
 
@@ -638,23 +654,32 @@ def ep_fixtures(q) -> dict:
 
     upcoming, completed = [], []
     played = called = 0
-    _seen_pairs: set = set()   # frozenset(home, away) — deduplicates same match stored twice
+    _seen_pairs: dict = {}   # frozenset(home, away) -> match_date of the shown row
     for (d, home, away, hs, as_, neutral, city, country) in rows:
         neutral = bool(neutral)
         pair = frozenset((home, away))
         done = hs is not None and as_ is not None
-        # Skip duplicate completed matches (same teams, different home/away order or date)
-        if done and pair in _seen_pairs:
+        # Skip a duplicate of the SAME completed match (twin row a day or two
+        # apart) — but never a legitimate rematch (group stage + final are
+        # weeks apart, and the same two teams can meet twice in a World Cup).
+        if done and pair in _seen_pairs and abs((d - _seen_pairs[pair]).days) <= 3:
             continue
         if done:
-            _seen_pairs.add(pair)
+            _seen_pairs[pair] = d
         pr = p.predict(home, away, neutral=neutral, log=False)
         # Completed ties are shown + graded on the frozen pre-kickoff call when
         # one was stored; the live recompute is only the (pre-tournament) fallback.
-        fz = frozen.get((home, away)) if done else None
+        # Calls are matched to THIS meeting by date (±3 days absorbs the feeds'
+        # local-day/UTC-day skew without ever crossing to a rematch).
+        fz = None
+        if done:
+            for md, call in frozen.get((home, away), ()):
+                if md is None or abs((md - d).days) <= 3:
+                    fz = call        # created_at order — the latest wins
         view = {**pr, **fz} if fz else pr
         fav = max(("home", view["p_home"]), ("draw", view["p_draw"]),
                   ("away", view["p_away"]), key=lambda kv: kv[1])[0]
+        ko = _kickoff_utc(home, away, d)
         base = {
             "date": d.isoformat(),
             "home": _team_card(home, pr["elo_home"]),
@@ -663,7 +688,7 @@ def ep_fixtures(q) -> dict:
             "p_home": view["p_home"], "p_draw": view["p_draw"], "p_away": view["p_away"],
             "fav": fav, "exp_home_goals": view["exp_home_goals"],
             "exp_away_goals": view["exp_away_goals"], "top_scoreline": view["top_scoreline"],
-            "kickoff": schedule_2026.KICKOFFS_UTC.get((home, away)),
+            "kickoff": ko.strftime("%Y-%m-%dT%H:%M:%SZ") if ko else None,
         }
         if not done:                            # not played yet
             upcoming.append(base)

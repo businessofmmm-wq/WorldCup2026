@@ -120,6 +120,32 @@ def _load_played() -> tuple[dict, dict]:
     return results, shootouts
 
 
+def _load_real_r32() -> dict[int, tuple[str, str]]:
+    """The real R32 pairings keyed by FIFA match number, matched from the DB by
+    official venue city + date (±1 day). Empty until the round of 32 is drawn;
+    the sim only pins the bracket once ALL sixteen pairings resolve, so a
+    partial draw can never mix real ties with derived slot fills."""
+    out: dict[int, tuple[str, str]] = {}
+    field = set(field_2026.FIELD)
+    try:
+        with connect() as conn:
+            rows = conn.execute(
+                "SELECT match_date, home_team, away_team, city FROM matches "
+                "WHERE tournament='FIFA World Cup' AND match_date >= %s "
+                "AND city IS NOT NULL",
+                (dt.date(2026, 6, 26),)).fetchall()
+    except Exception:
+        return {}
+    for m, (city, date_s) in field_2026.R32_VENUES.items():
+        want = dt.date.fromisoformat(date_s)
+        for d, h, a, c in rows:
+            if (c == city and abs((d - want).days) <= 1
+                    and h in field and a in field):
+                out[m] = (h, a)
+                break
+    return out
+
+
 class Tournament:
     def __init__(self, predictor: Predictor | None = None, seed: int | None = None):
         self.pred = predictor or Predictor()
@@ -127,6 +153,12 @@ class Tournament:
         self.rng = random.Random(seed)
         # Played-match conditioning (real scores override sampling).
         self.real_results, self.real_shootouts = _load_played()
+        # Real-bracket conditioning: once all 16 R32 ties are drawn, the sim
+        # plays THOSE pairings (FIFA's actual tie-breaks + third-place slotting)
+        # instead of re-deriving them — otherwise an already-eliminated side
+        # can dodge its real tie and keep phantom title odds.
+        real32 = _load_real_r32()
+        self.real_r32 = real32 if len(real32) == len(field_2026.R32) else {}
         # cache scoreline grids per ordered pair (neutral) — big speed win
         self._grid_cache: dict[tuple, tuple] = {}
         # Stable QMC dimension for every match decision (knockouts first, on the
@@ -227,9 +259,14 @@ class Tournament:
                       reverse=True)[:8]
         third_groups = {g: t for g, t, *_ in best}     # group letter -> team
 
-        for t in (list(win_by_g.values()) + list(run_by_g.values())
-                  + list(third_groups.values())):
-            stage[t] = "r32"
+        if self.real_r32:
+            # The drawn R32 is ground truth for who reached the round.
+            for a, b in self.real_r32.values():
+                stage[a] = stage[b] = "r32"
+        else:
+            for t in (list(win_by_g.values()) + list(run_by_g.values())
+                      + list(third_groups.values())):
+                stage[t] = "r32"
 
         champion = self._play_bracket(win_by_g, run_by_g, third_groups, stage)
         return {"stage": stage, "champion": champion, "groups": group_tables,
@@ -271,14 +308,16 @@ class Tournament:
     def _play_bracket(self, win_by_g, run_by_g, third_groups, stage) -> str:
         """Play the fixed 2026 bracket; update `stage` per team, return champion."""
         slot = {}
-        for g in win_by_g:
-            slot["1" + g] = win_by_g[g]
-            slot["2" + g] = run_by_g[g]
-        slot.update(self._assign_thirds(third_groups))
+        if not self.real_r32:       # real pairings make slot derivation moot
+            for g in win_by_g:
+                slot["1" + g] = win_by_g[g]
+                slot["2" + g] = run_by_g[g]
+            slot.update(self._assign_thirds(third_groups))
 
         results = {}
         for idx, (m, s1, s2) in enumerate(field_2026.R32):
-            w = self._knockout(slot[s1], slot[s2], self._dim[("r32", idx)])
+            a, b = self.real_r32.get(m) or (slot[s1], slot[s2])
+            w = self._knockout(a, b, self._dim[("r32", idx)])
             results[m] = w
             stage[w] = "r16"
         for m in (89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 104):

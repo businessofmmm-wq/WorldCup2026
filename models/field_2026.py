@@ -75,6 +75,22 @@ ALLOWED_THIRDS = {
     "T85": set("EFGIJ"), "T87": set("DEIJL"),
 }
 
+# Official R32 venues: FIFA match number -> (host city, scheduled date).
+# Once the real R32 is drawn, tournament.py uses this to pin each DB fixture to
+# its bracket position (city + date within ±1 day — the feeds disagree on local
+# matchday vs UTC day), so the sim plays the REAL bracket instead of re-deriving
+# tie-breaks and third-place slots that FIFA has already settled differently.
+R32_VENUES = {
+    73: ("Inglewood", "2026-06-28"),      74: ("Foxborough", "2026-06-29"),
+    75: ("Guadalupe", "2026-06-30"),      76: ("Houston", "2026-06-29"),
+    77: ("East Rutherford", "2026-06-30"), 78: ("Arlington", "2026-06-30"),
+    79: ("Mexico City", "2026-07-01"),    80: ("Atlanta", "2026-07-01"),
+    81: ("Santa Clara", "2026-07-02"),    82: ("Seattle", "2026-07-01"),
+    83: ("Toronto", "2026-07-02"),        84: ("Inglewood", "2026-07-02"),
+    85: ("Vancouver", "2026-07-03"),      86: ("Miami Gardens", "2026-07-03"),
+    87: ("Kansas City", "2026-07-04"),    88: ("Arlington", "2026-07-03"),
+}
+
 # match -> (source match 1, source match 2); the winners of the sources meet.
 BRACKET = {
     89: (74, 77), 90: (73, 75), 91: (76, 78), 92: (79, 80),
